@@ -1,0 +1,7 @@
+{
+  "name": "SDR-LBJ (列车报警器) 信号接收和解析器",
+  "description": "基于 RTL-SDR 与 Android 驱动联动的铁路 LBJ (列车防护报警/列车无线电信息系统) 实时信号接收与报文解调器，支持车次、机车、速度、公里标、线路解析、到达时间估算与频谱瀑布流展示。",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+

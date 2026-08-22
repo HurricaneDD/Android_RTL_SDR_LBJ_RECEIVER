@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <group
+        android:translateX="0"
+        android:translateY="0">
+        <!-- Radio Tower / Antenna Central Mast -->
+        <path
+            android:fillColor="#FFFFFF"
+            android:pathData="M54,34 L49,76 L59,76 Z" />
+        <path
+            android:fillColor="#FFFFFF"
+            android:pathData="M44,76 L64,76 L64,80 L44,80 Z" />
+        <path
+            android:fillColor="#38BDF8"
+            android:pathData="M54,26 m-6,0 a6,6 0 1,0 12,0 a6,6 0 1,0 -12,0" />
+
+        <!-- Radio Waves Left Inner -->
+        <path
+            android:strokeColor="#FFFFFF"
+            android:strokeWidth="3.5"
+            android:strokeLineCap="round"
+            android:pathData="M43,20 C39.5,23.5 39.5,28.5 43,32" />
+        <!-- Radio Waves Right Inner -->
+        <path
+            android:strokeColor="#FFFFFF"
+            android:strokeWidth="3.5"
+            android:strokeLineCap="round"
+            android:pathData="M65,20 C68.5,23.5 68.5,28.5 65,32" />
+
+        <!-- Radio Waves Left Outer -->
+        <path
+            android:strokeColor="#BAE6FD"
+            android:strokeWidth="3.5"
+            android:strokeLineCap="round"
+            android:pathData="M35,13 C27.5,20.5 27.5,31.5 35,39" />
+        <!-- Radio Waves Right Outer -->
+        <path
+            android:strokeColor="#BAE6FD"
+            android:strokeWidth="3.5"
+            android:strokeLineCap="round"
+            android:pathData="M73,13 C80.5,20.5 80.5,31.5 73,39" />
+
+        <!-- Radio Waves Outermost -->
+        <path
+            android:strokeColor="#E0F2FE"
+            android:strokeWidth="3"
+            android:strokeLineCap="round"
+            android:pathData="M27,6 C16,17 16,35 27,46" />
+        <path
+            android:strokeColor="#E0F2FE"
+            android:strokeWidth="3"
+            android:strokeLineCap="round"
+            android:pathData="M81,6 C92,17 92,35 81,46" />
+    </group>
+</vector>
