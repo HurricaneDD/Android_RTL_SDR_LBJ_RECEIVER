@@ -41,6 +41,7 @@ import com.example.ui.components.GainDialog
 import com.example.ui.components.PpmDialog
 import com.example.ui.components.RouteStationKmDialog
 import com.example.ui.components.SignalLossDialog
+import com.example.ui.components.TrainTypeRuleDialog
 import com.example.ui.components.WatchlistDialog
 import com.example.ui.screens.DashboardScreen
 import com.example.ui.screens.HistoryScreen
@@ -75,17 +76,19 @@ fun MainScreen(viewModel: LbjViewModel) {
     var showWatchlistDialog by remember { mutableStateOf(false) }
     var showRouteKmDialog by remember { mutableStateOf(false) }
     var showFftExplanationDialog by remember { mutableStateOf(false) }
+    var showTrainTypeRuleDialog by remember { mutableStateOf(false) }
     var editingRouteName by remember { mutableStateOf("") }
     var editingRouteKm by remember { mutableStateOf<Double?>(null) }
+    var editingRouteNickname by remember { mutableStateOf("") }
 
     Scaffold(
         topBar = {
             TopAppBar(
                 title = {
                     Text(
-                        text = "SDR-LBJ (列车报警器) 信号接收和解析器",
+                        text = "SDR-LBJ",
                         color = TextPrimary,
-                        fontSize = 17.sp,
+                        fontSize = 18.sp,
                         fontWeight = FontWeight.Bold
                     )
                 },
@@ -166,6 +169,7 @@ fun MainScreen(viewModel: LbjViewModel) {
                 onOpenCsDialog = { showCsDialog = true },
                 onOpenWatchlistDialog = { showWatchlistDialog = true },
                 onOpenFftExplanationDialog = { showFftExplanationDialog = true },
+                onOpenTrainTypeRuleDialog = { showTrainTypeRuleDialog = true },
                 modifier = screenModifier
             )
             1 -> HistoryScreen(
@@ -176,9 +180,10 @@ fun MainScreen(viewModel: LbjViewModel) {
             )
             2 -> RoutesScreen(
                 savedRoutes = savedRoutes,
-                onAddOrEditRoute = { route, km ->
+                onAddOrEditRoute = { route, km, nickname ->
                     editingRouteName = route
                     editingRouteKm = km
+                    editingRouteNickname = nickname
                     showRouteKmDialog = true
                 },
                 onDeleteRoute = { route -> viewModel.deleteRouteStationKm(route) },
@@ -196,10 +201,15 @@ fun MainScreen(viewModel: LbjViewModel) {
                 onToggleFilterMode = { viewModel.setFilterMode(it) },
                 onToggleBroadcastAlerts = { viewModel.setBroadcastAlerts(it) },
                 onToggleAlertTone = { viewModel.setAlertToneEnabled(it) },
+                onToggleAlertNotification = { viewModel.setAlertNotificationEnabled(it) },
                 onToggleKeepAlive = { viewModel.setKeepAliveEnabled(it) },
                 onToggleSimulationButton = { viewModel.setShowSimulationButton(it) },
+                onSelectTtsEngineMode = { viewModel.setTtsEngineMode(it) },
+                onClearTtsCache = { viewModel.clearTtsCache() },
+                onToggleEnableExternalAutomation = { viewModel.setEnableExternalAutomation(it) },
                 onResetAllSettings = { viewModel.resetAllSettings() },
                 onLaunchDriver = { viewModel.launchAndroidDriver() },
+                onTestVoiceBroadcast = { viewModel.testVoiceBroadcast() },
                 modifier = screenModifier
             )
         }
@@ -265,9 +275,10 @@ fun MainScreen(viewModel: LbjViewModel) {
         RouteStationKmDialog(
             initialRoute = editingRouteName,
             initialKm = editingRouteKm,
+            initialNickname = editingRouteNickname,
             onDismiss = { showRouteKmDialog = false },
-            onConfirm = { route, km ->
-                viewModel.setRouteStationKm(route, km)
+            onConfirm = { route, km, nickname ->
+                viewModel.setRouteStationKm(route, km, nickname)
                 showRouteKmDialog = false
             }
         )
@@ -276,6 +287,12 @@ fun MainScreen(viewModel: LbjViewModel) {
     if (showFftExplanationDialog) {
         FftExplanationDialog(
             onDismiss = { showFftExplanationDialog = false }
+        )
+    }
+
+    if (showTrainTypeRuleDialog) {
+        TrainTypeRuleDialog(
+            onDismiss = { showTrainTypeRuleDialog = false }
         )
     }
 

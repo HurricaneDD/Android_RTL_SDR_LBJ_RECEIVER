@@ -84,35 +84,45 @@ fun HistoryScreen(
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
+            verticalAlignment = Alignment.Top
         ) {
-            Column {
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(end = 8.dp)
+            ) {
                 Text(
                     text = "列车接收历史 (${records.size})",
                     color = PrimaryBlueDark,
                     fontSize = 18.sp,
                     fontWeight = FontWeight.Bold
                 )
+                Spacer(modifier = Modifier.height(2.dp))
                 Text(
                     text = "一趟列车单条归档：记录车次、方向、机车、线路及通联起止时间",
                     color = TextSecondary,
-                    fontSize = 12.sp
+                    fontSize = 12.sp,
+                    lineHeight = 16.sp
                 )
             }
 
-            if (records.isNotEmpty()) {
-                OutlinedButton(
-                    onClick = { showClearDialog = true },
-                    modifier = Modifier.testTag("clear_history_button")
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.DeleteSweep,
-                        contentDescription = "Clear",
-                        tint = RedAlert,
-                        modifier = Modifier.padding(end = 4.dp)
-                    )
-                    Text("清空", color = RedAlert, fontSize = 12.sp)
-                }
+            OutlinedButton(
+                onClick = { if (records.isNotEmpty()) showClearDialog = true },
+                enabled = records.isNotEmpty(),
+                modifier = Modifier.testTag("clear_history_button")
+            ) {
+                Icon(
+                    imageVector = Icons.Default.DeleteSweep,
+                    contentDescription = "Clear",
+                    tint = if (records.isNotEmpty()) RedAlert else TextMuted,
+                    modifier = Modifier.padding(end = 4.dp)
+                )
+                Text(
+                    text = "一键清空",
+                    color = if (records.isNotEmpty()) RedAlert else TextMuted,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
             }
         }
 

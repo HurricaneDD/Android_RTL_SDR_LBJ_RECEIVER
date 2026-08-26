@@ -39,6 +39,11 @@ class RtlTcpClient(
         ERROR
     }
 
+    companion object {
+        // Fast precomputed conversion table (0..255) -> Float: (b - 127.5f) / 128.0f
+        val BYTE_TO_FLOAT_TABLE = FloatArray(256) { b -> (b - 127.5f) * 0.0078125f }
+    }
+
     var connectionState: ConnectionState = ConnectionState.IDLE
         private set
 
@@ -104,10 +109,36 @@ class RtlTcpClient(
         val byteBuffer = ByteArray(chunkBytes)
 
         try {
-            val s = Socket()
-            s.tcpNoDelay = true
-            s.receiveBufferSize = 256 * 1024
-            s.connect(InetSocketAddress(host, port), 5000)
+            var connectedSocket: Socket? = null
+            val maxAttempts = 10
+            var attempt = 0
+            var lastEx: Exception? = null
+
+            while (isRunning.get() && attempt < maxAttempts && connectedSocket == null) {
+                attempt++
+                try {
+                    val s = Socket()
+                    s.tcpNoDelay = true
+                    s.receiveBufferSize = 256 * 1024
+                    s.connect(InetSocketAddress(host, port), 1200)
+                    connectedSocket = s
+                } catch (e: Exception) {
+                    lastEx = e
+                    if (attempt < maxAttempts && isRunning.get()) {
+                        try {
+                            Thread.sleep(400) // Wait for USB driver service to start listening on port 1234
+                        } catch (_: InterruptedException) {
+                            break
+                        }
+                    }
+                }
+            }
+
+            if (connectedSocket == null) {
+                throw lastEx ?: RuntimeException("无法连接 RTL-TCP 服务端 ($host:$port)")
+            }
+
+            val s = connectedSocket
             socket = s
             val inStream = s.getInputStream()
             val outStream = s.getOutputStream()
@@ -144,11 +175,14 @@ class RtlTcpClient(
 
                 if (bytesRead == chunkBytes) {
                     val complexBuf = bufferPool.poll() ?: ComplexBuffer(blockSize)
+                    val real = complexBuf.real
+                    val imag = complexBuf.imag
+                    val tab = BYTE_TO_FLOAT_TABLE
+
                     for (i in 0 until blockSize) {
-                        val rawI = byteBuffer[i * 2].toInt() and 0xFF
-                        val rawQ = byteBuffer[i * 2 + 1].toInt() and 0xFF
-                        complexBuf.real[i] = (rawI - 127.5f) / 128.0f
-                        complexBuf.imag[i] = (rawQ - 127.5f) / 128.0f
+                        val idx2 = i * 2
+                        real[i] = tab[byteBuffer[idx2].toInt() and 0xFF]
+                        imag[i] = tab[byteBuffer[idx2 + 1].toInt() and 0xFF]
                     }
                     // Offer to queue; if full, drop oldest to avoid UI freeze and latency accumulation
                     if (!bufferQueue.offer(complexBuf)) {

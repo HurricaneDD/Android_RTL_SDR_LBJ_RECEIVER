@@ -68,17 +68,7 @@ object LocomotiveDict {
 object TrainCategorizer {
 
     /**
-     * 根据列车车次号进行类型映射分类：
-     * - G头：高速动车组列车
-     * - D头：动车组列车
-     * - C头：城际动车组列车
-     * - Z开头：普速-直达特快列车
-     * - T开头：普速-特快列车
-     * - K开头：普速-快速列车
-     * - Y开头：普速-旅游列车
-     * - X开头：行包快运列车
-     * - 四位及以内纯数字 (1~9999)：普速-普客列车
-     * - 五位纯数字及其他 (00回送、调机、小运转、货运等)：货运列车、调机运转等
+     * 根据铁总运[2014]308号文《列车车次编排规定》进行类型映射分类
      */
     fun categorize(trainNo: String?, isDetailed: Boolean = true): String {
         if (trainNo.isNullOrBlank() || trainNo == "等待信号..." || trainNo == "----") {
@@ -86,72 +76,105 @@ object TrainCategorizer {
         }
         val tn = trainNo.replace(" ", "").trim().uppercase()
 
-        // 1. 字母字头分类
-        if (tn.startsWith("G")) return "高速动车组列车"
-        if (tn.startsWith("D")) return "动车组列车"
-        if (tn.startsWith("C")) return "城际动车组列车"
-        if (tn.startsWith("Z")) return "普速-直达特快列车"
-        if (tn.startsWith("T")) return "普速-特快列车"
-        if (tn.startsWith("K")) return "普速-快速列车"
-        if (tn.startsWith("Y")) return "普速-旅游列车"
-        if (tn.startsWith("X")) return "行包快运列车"
+        // 1. 字母字头旅客列车
+        if (tn.startsWith("G")) return "高速动车组旅客列车"
+        if (tn.startsWith("D")) return "动车组旅客列车"
+        if (tn.startsWith("C")) return "城际动车组旅客列车"
+        if (tn.startsWith("S")) return "市郊铁路列车"
+        if (tn.startsWith("Z")) return "直达特快旅客列车"
+        if (tn.startsWith("T")) return "特快旅客列车"
+        if (tn.startsWith("K")) return "快速旅客列车"
+        if (tn.startsWith("L") || tn.startsWith("A")) return "临时旅客列车"
+        if (tn.startsWith("Y")) return "旅游列车"
+        if (tn.startsWith("F")) return "因故折返旅客列车"
 
-        // 2. 回送与运转车次
+        // 2. 动车组检测、确认列车
+        if (tn.startsWith("DJ")) {
+            val num = tn.removePrefix("DJ").toIntOrNull()
+            return when {
+                num != null && num in 1..1998 -> "动车组检测列车"
+                num != null && num in 5001..8998 -> "动车组确认列车"
+                else -> "动车组检测、确认列车"
+            }
+        }
+
+        // 3. 特快及快运货物班列 (X字头)
+        if (tn.startsWith("X")) {
+            val num = tn.removePrefix("X").toIntOrNull()
+            return when {
+                num != null && num in 1..198 -> "特快货物班列"
+                num != null && num in 201..398 -> "快速货物班列"
+                num != null && (num in 401..998 || num in 2401..2998) -> "货物快运列车"
+                num != null && num in 8001..8998 -> "中欧、中亚集装箱班列"
+                num != null && num in 9001..9500 -> "中亚集装箱班列"
+                num != null && num in 9501..9998 -> "水铁联运班列"
+                num != null && num > 10000 -> "货物快运列车"
+                else -> "特快货物班列"
+            }
+        }
+
+        // 4. 回送客车底列车
         if (tn.startsWith("00")) {
             val digits = tn.filter { it.isDigit() }
             val n = digits.toIntOrNull()
-            if (n != null) {
-                return when (n) {
-                    in 1..100 -> "货运列车、调机运转等 (动车组有火回送)"
-                    in 101..198 -> "货运列车、调机运转等 (动车组无火跨局回送)"
-                    in 201..298 -> "货运列车、调机运转等 (动车组无火管内回送)"
-                    in 301..398 -> "货运列车、调机运转等 (跨局回送客车)"
-                    in 401..498 -> "货运列车、调机运转等 (管内回送客车)"
-                    else -> "货运列车、调机运转等 (回送列车)"
-                }
+            return when {
+                n != null && n in 1..100 -> "有火回送动车组车底"
+                n != null && n in 101..298 -> "无火回送动车组车底"
+                n != null && n in 301..498 -> "无火回送普速客车底"
+                else -> "回送客车底列车"
             }
-            return "货运列车、调机运转等"
         }
 
+        // 5. 图定客车底回送 (以单0开头)
+        if (tn.startsWith("0") && tn.length >= 2 && !tn.startsWith("00")) {
+            return "回送图定客车底"
+        }
+
+        // 6. 纯数字车次编号分类
         val digitsOnly = tn.filter { it.isDigit() }
         val n = digitsOnly.toIntOrNull()
         if (n != null) {
-            // 四位及以内纯数字 (1 ~ 9999) 归为 普速-普客列车
-            if (digitsOnly.length <= 4 && n in 1..9999) {
-                return "普速-普客列车"
-            }
-
-            // 五位纯数字 (10001 ~ 99999) 归为 货运列车、调机运转等
-            val freightRanges = listOf(
-                10001..19998 to "货运列车、调机运转等 (技术直达)",
-                20001..29998 to "货运列车、调机运转等 (直通货运)",
-                30001..39998 to "货运列车、调机运转等 (区段货运)",
-                40001..44998 to "货运列车、调机运转等 (摘挂列车)",
-                45001..49998 to "货运列车、调机运转等 (小运转列车)",
-                50001..50998 to "货运列车、调机运转等 (客车单机)",
-                51001..51998 to "货运列车、调机运转等 (货车单机)",
-                52001..52998 to "货运列车、调机运转等 (小运转单机)",
-                53001..54998 to "货运列车、调机运转等 (补机)",
-                55001..55998 to "货运列车、调机运转等 (试运行列车)",
-                56001..56998 to "货运列车、调机运转等 (工程轨道车)",
-                57001..57998 to "货运列车、调机运转等 (路用列车)",
-                58101..58998 to "货运列车、调机运转等 (救援列车)",
-                60001..69998 to "货运列车、调机运转等 (自备车)",
-                70001..70998 to "货运列车、调机运转等 (超限货物)",
-                71001..72998 to "货运列车、调机运转等 (万吨重载)",
-                73001..74998 to "货运列车、调机运转等 (冷藏列车)",
-                75001..75998 to "货运列车、调机运转等 (集装箱专列)",
-                80001..88998 to "货运列车、调机运转等 (大宗/班列/专列)",
-                90001..94998 to "货运列车、调机运转等 (军用列车)"
-            )
-            for ((range, cat) in freightRanges) {
-                if (n in range) {
-                    return cat
+            // 普通旅客列车 (1001-7598) 与通勤列车 (7601-8998)
+            if (digitsOnly.length <= 4) {
+                return when (n) {
+                    in 1001..5998 -> "普通旅客快车"
+                    in 6001..7598 -> "普通旅客慢车"
+                    in 7601..8998 -> "通勤列车"
+                    in 1..1000 -> "普通旅客快车"
+                    else -> "普通旅客列车"
                 }
             }
-            return "货运列车、调机运转等"
+
+            // 5位纯数字货运、单机与路用等车次分类
+            return when (n) {
+                in 10001..19998 -> "技术直达列车"
+                in 20001..29998 -> "直通货物列车"
+                in 30001..39998 -> "区段摘挂列车"
+                in 40001..44998 -> "摘挂列车"
+                in 45001..49998 -> "小运转列车"
+                in 50001..50998 -> "客车单机"
+                in 51001..51998 -> "货车单机"
+                in 52001..52998 -> "小运转单机"
+                in 53001..54998 -> "补机"
+                in 55001..55300 -> "试运转列车"
+                in 55301..55998 -> "试运转列车"
+                in 56001..56998 -> "轻油动车、轨道车"
+                in 57001..57998 -> "路用列车"
+                in 58101..58998 -> "救援列车"
+                in 60001..69998 -> "自备列车"
+                in 70001..70998 -> "超限货物列车"
+                in 71001..77998 -> "重载货物列车"
+                in 78001..78998 -> "保温列车"
+                in 80001..81998 -> "普快货物班列"
+                in 82001..84998 -> "煤炭直达列车"
+                in 85001..85998 -> "石油直达列车"
+                in 86001..86998 -> "始发直达列车"
+                in 87001..87998 -> "空车直达列车"
+                in 90001..91998 -> "军用列车"
+                else -> "货物列车"
+            }
         }
 
-        return "货运列车、调机运转等"
+        return "货物列车"
     }
 }

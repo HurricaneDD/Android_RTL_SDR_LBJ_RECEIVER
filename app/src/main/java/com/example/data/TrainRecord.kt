@@ -22,5 +22,6 @@ data class RouteStationKmEntity(
     @PrimaryKey
     val routeName: String,
     val stationKm: Double,
-    val updatedTimestamp: Long
+    val nickname: String = "",
+    val updatedTimestamp: Long = System.currentTimeMillis()
 )

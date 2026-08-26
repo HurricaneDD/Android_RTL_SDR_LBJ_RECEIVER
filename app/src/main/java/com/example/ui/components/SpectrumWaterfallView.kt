@@ -26,6 +26,10 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -60,13 +64,23 @@ fun SpectrumWaterfallView(
     peakFreqHz: Double?,
     peakDeltaHz: Double?,
     peakDb: Float?,
+    fps: Float = 0.0f,
     onClick: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
-    val clickModifier = if (onClick != null) {
-        Modifier.clickable { onClick() }
-    } else {
-        Modifier
+    val linePath = remember { Path() }
+    val fillPath = remember { Path() }
+    val lineStroke = remember {
+        Stroke(
+            width = 4f,
+            cap = StrokeCap.Round,
+            join = StrokeJoin.Round
+        )
+    }
+    val fillGradient = remember {
+        Brush.verticalGradient(
+            colors = listOf(Color(0x3300FF66), Color(0x0500FF66))
+        )
     }
 
     Box(
@@ -74,12 +88,11 @@ fun SpectrumWaterfallView(
             .fillMaxWidth()
             .background(SurfaceCard, RoundedCornerShape(12.dp))
             .border(1.dp, BorderLight, RoundedCornerShape(12.dp))
-            .then(clickModifier)
             .padding(14.dp)
             .testTag("spectrum_waterfall_card")
     ) {
         Column {
-            // Header Row: Title & 科普说明 on left, Frequency on the right
+            // Header Row: Title & 科普说明 on left, Frequency and Frame Rate on the right
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
@@ -99,7 +112,9 @@ fun SpectrumWaterfallView(
                         Box(
                             modifier = Modifier
                                 .background(PrimaryBlueSoft, RoundedCornerShape(4.dp))
+                                .clickable { onClick() }
                                 .padding(horizontal = 6.dp, vertical = 2.dp)
+                                .testTag("fft_info_button")
                         ) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Icon(
@@ -120,19 +135,30 @@ fun SpectrumWaterfallView(
                     }
                 }
 
-                // Center Frequency positioned clearly on the right
-                Text(
-                    text = String.format(Locale.US, "▲ %.4f MHz", freqHz / 1_000_000.0),
-                    color = PrimaryBlueDark,
-                    fontSize = 14.sp,
-                    fontFamily = FontFamily.Monospace,
-                    fontWeight = FontWeight.Bold
-                )
+                // Center Frequency and FPS frame rate positioned on the right
+                Column(
+                    horizontalAlignment = Alignment.End
+                ) {
+                    Text(
+                        text = String.format(Locale.US, "▲ %.4f MHz", freqHz / 1_000_000.0),
+                        color = PrimaryBlueDark,
+                        fontSize = 14.sp,
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = if (fps > 0f) String.format(Locale.US, "%.1f FPS", fps) else "-- FPS",
+                        color = if (fps > 10f) EmeraldGreen else TextMuted,
+                        fontSize = 10.5.sp,
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
             }
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            // 硬件增益、PPM、采样率 各占一整行，无灰色背景，无粗体字
+            // 硬件增益、PPM、采样率 各占一整行
             Column(
                 modifier = Modifier.fillMaxWidth(),
                 verticalArrangement = Arrangement.spacedBy(2.dp)
@@ -162,90 +188,175 @@ fun SpectrumWaterfallView(
 
             Spacer(modifier = Modifier.height(10.dp))
 
-            val gradientColors = remember { listOf(Color(0xFF38BDF8), Color(0xFF10B981), Color(0xFF047857)) }
-            val gridDbs = remember { floatArrayOf(-90f, -70f, -50f) }
+            val gridDbs = remember { floatArrayOf(-10f, -30f, -50f, -70f) }
 
-            // 32-band FFT Spectrum Canvas
-            Canvas(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(84.dp)
-                    .background(Color(0xFF0F172A), RoundedCornerShape(8.dp))
-                    .border(1.dp, BorderMedium, RoundedCornerShape(8.dp))
-                    .testTag("spectrum_canvas")
+            val minDb = -70.0f
+            val maxDb = -10.0f
+            val dbRange = maxDb - minDb
+
+            // Row containing Left RSSI Y-Axis and Main Spectrum Canvas
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                val canvasWidth = size.width
-                val canvasHeight = size.height
-                val numBars = spectrumBars.size
-                if (numBars == 0) return@Canvas
+                // RSSI Y-Axis Scale labels on the left (-10dB to -70dB)
+                Column(
+                    modifier = Modifier
+                        .height(86.dp)
+                        .padding(end = 4.dp),
+                    verticalArrangement = Arrangement.SpaceBetween,
+                    horizontalAlignment = Alignment.End
+                ) {
+                    Text("-10", color = TextMuted, fontSize = 8.5.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold)
+                    Text("-30", color = TextMuted, fontSize = 8.5.sp, fontFamily = FontFamily.Monospace)
+                    Text("-50", color = TextMuted, fontSize = 8.5.sp, fontFamily = FontFamily.Monospace)
+                    Text("-70", color = TextMuted, fontSize = 8.5.sp, fontFamily = FontFamily.Monospace)
+                }
 
-                val minDb = -110.0f
-                val maxDb = -30.0f
-                val dbRange = maxDb - minDb
+                // 32-band FFT Spectrum Canvas (Line Graph)
+                Canvas(
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(86.dp)
+                        .background(Color(0xFF0B1120), RoundedCornerShape(6.dp))
+                        .border(1.dp, BorderMedium, RoundedCornerShape(6.dp))
+                        .testTag("spectrum_canvas")
+                ) {
+                    val canvasWidth = size.width
+                    val canvasHeight = size.height
+                    val numPoints = spectrumBars.size
+                    if (numPoints == 0) return@Canvas
 
-                val barSpacing = 2.dp.toPx()
-                val totalSpacing = barSpacing * (numBars - 1)
-                val barWidth = max(2f, (canvasWidth - totalSpacing) / numBars)
+                    // Draw grid lines (-10dB, -30dB, -50dB, -70dB)
+                    for (gDb in gridDbs) {
+                        val normY = (1.0f - (gDb - minDb) / dbRange).coerceIn(0f, 1f)
+                        val yPos = normY * canvasHeight
+                        drawLine(
+                            color = Color(0x26FFFFFF),
+                            start = Offset(0f, yPos),
+                            end = Offset(canvasWidth, yPos),
+                            strokeWidth = 1f
+                        )
+                    }
 
-                val gradientBrush = Brush.verticalGradient(
-                    colors = gradientColors,
-                    startY = 0f,
-                    endY = canvasHeight
-                )
-
-                // Draw grid lines (-90dB, -70dB, -50dB)
-                for (gDb in gridDbs) {
-                    val normY = (1.0f - (gDb - minDb) / dbRange).coerceIn(0f, 1f)
-                    val yPos = normY * canvasHeight
+                    // Vertical Quarter Grid Lines
                     drawLine(
-                        color = Color(0x33FFFFFF),
-                        start = Offset(0f, yPos),
-                        end = Offset(canvasWidth, yPos),
+                        color = Color(0x1AFFFFFF),
+                        start = Offset(canvasWidth * 0.25f, 0f),
+                        end = Offset(canvasWidth * 0.25f, canvasHeight),
                         strokeWidth = 1f
                     )
-                }
+                    drawLine(
+                        color = Color(0x1AFFFFFF),
+                        start = Offset(canvasWidth * 0.75f, 0f),
+                        end = Offset(canvasWidth * 0.75f, canvasHeight),
+                        strokeWidth = 1f
+                    )
 
-                // Draw Squelch Threshold Line
-                val thresholdNormY = (1.0f - (csThresholdDb - minDb) / dbRange).coerceIn(0f, 1f)
-                val thresholdY = thresholdNormY * canvasHeight
-                drawLine(
-                    color = Color(0xFFEF4444),
-                    start = Offset(0f, thresholdY),
-                    end = Offset(canvasWidth, thresholdY),
-                    strokeWidth = 2f
-                )
+                    // Draw Squelch Threshold Line
+                    val thresholdNormY = (1.0f - (csThresholdDb - minDb) / dbRange).coerceIn(0f, 1f)
+                    val thresholdY = thresholdNormY * canvasHeight
+                    drawLine(
+                        color = Color(0xFFEF4444),
+                        start = Offset(0f, thresholdY),
+                        end = Offset(canvasWidth, thresholdY),
+                        strokeWidth = 1.5f
+                    )
 
-                // Draw Spectrum Bars
-                val allIdle = spectrumBars.all { it <= minDb }
-                if (!allIdle) {
-                    for (i in 0 until numBars) {
-                        val db = spectrumBars[i].coerceIn(minDb, maxDb)
-                        val normHeight = ((db - minDb) / dbRange).coerceIn(0.0f, 1.0f)
-                        if (normHeight > 0.01f) {
-                            val barHeight = normHeight * canvasHeight
-                            val x = i * (barWidth + barSpacing)
-                            val y = canvasHeight - barHeight
+                    // Draw RSSI Bright Green Line Graph
+                    if (numPoints > 1) {
+                        linePath.rewind()
+                        fillPath.rewind()
 
-                            drawRect(
-                                brush = gradientBrush,
-                                topLeft = Offset(x, y),
-                                size = Size(barWidth, barHeight)
-                            )
+                        for (i in 0 until numPoints) {
+                            val x = i * (canvasWidth / (numPoints - 1))
+                            val db = spectrumBars[i].coerceIn(minDb, maxDb)
+                            val normY = (1.0f - (db - minDb) / dbRange).coerceIn(0f, 1f)
+                            val y = normY * canvasHeight
+
+                            if (i == 0) {
+                                linePath.moveTo(x, y)
+                                fillPath.moveTo(x, canvasHeight)
+                                fillPath.lineTo(x, y)
+                            } else {
+                                linePath.lineTo(x, y)
+                                fillPath.lineTo(x, y)
+                            }
                         }
-                    }
-                }
+                        fillPath.lineTo(canvasWidth, canvasHeight)
+                        fillPath.close()
 
-                // Center Carrier Marker
-                val centerX = canvasWidth / 2f
-                drawLine(
-                    color = Color(0xFFFDE047),
-                    start = Offset(centerX, 0f),
-                    end = Offset(centerX, canvasHeight),
-                    strokeWidth = 1.5f
-                )
+                        // Soft subtle green fill under the curve
+                        drawPath(
+                            path = fillPath,
+                            brush = fillGradient
+                        )
+
+                        // Bright green polyline
+                        drawPath(
+                            path = linePath,
+                            color = Color(0xFF00FF66),
+                            style = lineStroke
+                        )
+                    }
+
+                    // Center Carrier Marker
+                    val centerX = canvasWidth / 2f
+                    drawLine(
+                        color = Color(0xFFFDE047),
+                        start = Offset(centerX, 0f),
+                        end = Offset(centerX, canvasHeight),
+                        strokeWidth = 1.5f
+                    )
+                }
             }
 
-            Spacer(modifier = Modifier.height(10.dp))
+            Spacer(modifier = Modifier.height(4.dp))
+
+            // Frequency Labels on Left, Center, Right aligned below the Canvas
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // Placeholder to offset width matching Y-axis
+                Spacer(modifier = Modifier.width(28.dp))
+
+                Row(
+                    modifier = Modifier.weight(1f),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    val leftFreqMhz = (freqHz - 480_000.0) / 1_000_000.0
+                    val centerFreqMhz = freqHz / 1_000_000.0
+                    val rightFreqMhz = (freqHz + 480_000.0) / 1_000_000.0
+
+                    Text(
+                        text = String.format(Locale.US, "%.3fM", leftFreqMhz),
+                        color = TextMuted,
+                        fontSize = 9.5.sp,
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.Medium
+                    )
+
+                    Text(
+                        text = String.format(Locale.US, "▲ %.4fM", centerFreqMhz),
+                        color = PrimaryBlueDark,
+                        fontSize = 10.sp,
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.Bold
+                    )
+
+                    Text(
+                        text = String.format(Locale.US, "%.3fM", rightFreqMhz),
+                        color = TextMuted,
+                        fontSize = 9.5.sp,
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(8.dp))
 
             // Signal Metrics Row
             Row(

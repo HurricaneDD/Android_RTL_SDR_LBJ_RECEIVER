@@ -23,10 +23,13 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CellTower
 import androidx.compose.material.icons.filled.Code
+import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.FilterAlt
 import androidx.compose.material.icons.filled.NotificationsActive
+import androidx.compose.material.icons.filled.RecordVoiceOver
 import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material.icons.filled.Usb
+import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -57,6 +60,7 @@ import androidx.core.content.ContextCompat
 import com.example.driver.DriverLauncher
 import com.example.ui.ReceiverState
 import com.example.ui.components.AboutAppDialog
+import com.example.ui.components.TtsEngineSelectionDialog
 import com.example.ui.theme.AmberSignal
 import com.example.ui.theme.BorderLight
 import com.example.ui.theme.PrimaryBlue
@@ -81,16 +85,22 @@ fun SettingsScreen(
     onToggleFilterMode: (String) -> Unit,
     onToggleBroadcastAlerts: (Boolean) -> Unit,
     onToggleAlertTone: (Boolean) -> Unit,
+    onToggleAlertNotification: (Boolean) -> Unit = {},
     onToggleKeepAlive: (Boolean) -> Unit,
     onToggleSimulationButton: (Boolean) -> Unit,
+    onSelectTtsEngineMode: (String) -> Unit = {},
+    onClearTtsCache: () -> Pair<Int, Long> = { Pair(0, 0L) },
+    onToggleEnableExternalAutomation: (Boolean) -> Unit = {},
     onResetAllSettings: () -> Unit,
     onLaunchDriver: () -> Unit,
+    onTestVoiceBroadcast: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val scrollState = rememberScrollState()
     val context = LocalContext.current
     var showResetDialog by remember { mutableStateOf(false) }
     var showAboutDialog by remember { mutableStateOf(false) }
+    var showTtsEngineDialog by remember { mutableStateOf(false) }
 
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
@@ -128,6 +138,14 @@ fun SettingsScreen(
         AboutAppDialog(onDismiss = { showAboutDialog = false })
     }
 
+    if (showTtsEngineDialog) {
+        TtsEngineSelectionDialog(
+            currentMode = state.ttsEngineMode,
+            onSelectMode = onSelectTtsEngineMode,
+            onDismiss = { showTtsEngineDialog = false }
+        )
+    }
+
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -142,13 +160,15 @@ fun SettingsScreen(
             fontWeight = FontWeight.Bold
         )
         Text(
-            text = "常规功能偏好、后台保活服务与系统配置管理",
+            text = "常规功能偏好、语音播报引擎、后台保活与系统配置",
             color = TextSecondary,
             fontSize = 12.sp
         )
 
-        Spacer(modifier = Modifier.height(12.dp))
+        Spacer(modifier = Modifier.height(14.dp))
 
+        // 小分类: 语音播报设置
+        SettingsSectionHeader(icon = Icons.Default.VolumeUp, title = "语音播报设置")
         Card(
             modifier = Modifier
                 .fillMaxWidth()
@@ -158,12 +178,63 @@ fun SettingsScreen(
         ) {
             Column {
                 SettingsSwitchItem(
-                    title = "来车提示音开关",
-                    subtitle = "成功解析到列车信号或车次变更时播放2秒滴滴警示音",
+                    title = "来车提示音与语音播报",
+                    subtitle = "初次收到信号双声短促滴滴提示，二次接收自动语音播报来车详细信息",
                     checked = state.alertToneEnabled,
                     onCheckedChange = onToggleAlertTone
                 )
 
+                SettingsSwitchItem(
+                    title = "来车发送提示通知",
+                    subtitle = "语音播报开始的同时，发送含有报文信息的通知",
+                    checked = state.alertNotificationEnabled,
+                    onCheckedChange = onToggleAlertNotification
+                )
+
+                val ttsEngineLabel = when (state.ttsEngineMode) {
+                    "system" -> "系统 TTS 引擎"
+                    "online" -> "在线TTS API (仅联网)"
+                    else -> "自动选择 (推荐)"
+                }
+                SettingsItem(
+                    title = "选择语音合成引擎",
+                    subtitle = "优先检测系统中文语音；若无合适中文TTS，则自动使用备选在线TTS API",
+                    value = ttsEngineLabel,
+                    onClick = { showTtsEngineDialog = true }
+                )
+
+                val cacheSizeFormatted = formatFileSize(state.ttsCacheBytes)
+                SettingsItem(
+                    title = "清除在线TTS缓存语音",
+                    subtitle = "释放本地离线 TTS 音频文件 (已缓存: ${state.ttsCacheCount} 条, $cacheSizeFormatted)",
+                    value = "一键清除",
+                    onClick = {
+                        val (count, bytes) = onClearTtsCache()
+                        val sizeStr = formatFileSize(bytes)
+                        Toast.makeText(context, "已清除 $count 条离线缓存音频 ($sizeStr)", Toast.LENGTH_SHORT).show()
+                    }
+                )
+
+                SettingsItem(
+                    title = "试听语音播报",
+                    subtitle = "检查语音播报功能是否能正常工作",
+                    value = "立即试听",
+                    onClick = onTestVoiceBroadcast
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(14.dp))
+
+        // 常规系统与保活
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .border(1.dp, BorderLight, RoundedCornerShape(12.dp)),
+            shape = RoundedCornerShape(12.dp),
+            colors = CardDefaults.cardColors(containerColor = SurfaceCard)
+        ) {
+            Column {
                 SettingsSwitchItem(
                     title = "后台常驻保活",
                     subtitle = "以常驻通知形式维持前台服务，锁屏或切后台时持续监听列车信号",
@@ -280,58 +351,61 @@ fun SettingsScreen(
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        // Section 3: Android Automation & Driver
-        SettingsSectionHeader(icon = Icons.Default.NotificationsActive, title = "外部联动与自动化")
-        Card(
-            modifier = Modifier.fillMaxWidth().border(1.dp, BorderLight, RoundedCornerShape(12.dp)),
-            shape = RoundedCornerShape(12.dp),
-            colors = CardDefaults.cardColors(containerColor = SurfaceCard)
-        ) {
-            Column(modifier = Modifier.padding(12.dp)) {
-                SettingsSwitchItem(
-                    title = "MacroDroid / Tasker 广播联动",
-                    subtitle = "解调到有效列车报文时发送 com.train.alert 广播",
-                    checked = state.broadcastAlerts,
-                    onCheckedChange = onToggleBroadcastAlerts
-                )
+        // Section 3: Android Automation & Driver (仅在开启时显示)
+        if (state.enableExternalAutomation) {
+            Spacer(modifier = Modifier.height(16.dp))
+            SettingsSectionHeader(icon = Icons.Default.NotificationsActive, title = "外部联动与自动化")
+            Card(
+                modifier = Modifier.fillMaxWidth().border(1.dp, BorderLight, RoundedCornerShape(12.dp)),
+                shape = RoundedCornerShape(12.dp),
+                colors = CardDefaults.cardColors(containerColor = SurfaceCard)
+            ) {
+                Column(modifier = Modifier.padding(12.dp)) {
+                    SettingsSwitchItem(
+                        title = "MacroDroid / Tasker 广播联动",
+                        subtitle = "解调到有效列车报文时发送 com.train.alert 广播",
+                        checked = state.broadcastAlerts,
+                        onCheckedChange = onToggleBroadcastAlerts
+                    )
 
-                Spacer(modifier = Modifier.height(8.dp))
+                    Spacer(modifier = Modifier.height(8.dp))
 
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    OutlinedButton(
-                        onClick = {
-                            DriverLauncher.sendAlertBroadcast(
-                                context = context,
-                                train = "G102",
-                                direction = "下行",
-                                speed = "310",
-                                position = "145.8",
-                                loco = "CR400BF-5033",
-                                locoCode = "311",
-                                route = "京沪高铁",
-                                category = "高速动车组"
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        OutlinedButton(
+                            onClick = {
+                                DriverLauncher.sendAlertBroadcast(
+                                    context = context,
+                                    train = "G102",
+                                    direction = "下行",
+                                    speed = "310",
+                                    position = "145.8",
+                                    loco = "CR400BF-5033",
+                                    locoCode = "311",
+                                    route = "京沪高铁",
+                                    category = "高速动车组"
+                                )
+                                Toast.makeText(context, "已发送测试广播 (com.train.alert)", Toast.LENGTH_SHORT).show()
+                            },
+                            modifier = Modifier.weight(1f).testTag("test_broadcast_button")
+                        ) {
+                            Text("发送测试广播", fontSize = 12.sp, color = AmberSignal)
+                        }
+
+                        OutlinedButton(
+                            onClick = onLaunchDriver,
+                            modifier = Modifier.weight(1f).testTag("settings_launch_driver_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Usb,
+                                contentDescription = "Driver",
+                                tint = PrimaryBlue
                             )
-                            Toast.makeText(context, "已发送测试广播 (com.train.alert)", Toast.LENGTH_SHORT).show()
-                        },
-                        modifier = Modifier.weight(1f).testTag("test_broadcast_button")
-                    ) {
-                        Text("发送测试广播", fontSize = 12.sp, color = AmberSignal)
-                    }
-
-                    OutlinedButton(
-                        onClick = onLaunchDriver,
-                        modifier = Modifier.weight(1f).testTag("settings_launch_driver_button")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Usb,
-                            contentDescription = "Driver",
-                            tint = PrimaryBlue
-                        )
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text("尝试驱动设备", fontSize = 12.sp, color = PrimaryBlueDark)
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("尝试重新驱动设备", fontSize = 12.sp, color = PrimaryBlueDark)
+                        }
                     }
                 }
             }
@@ -347,6 +421,13 @@ fun SettingsScreen(
             colors = CardDefaults.cardColors(containerColor = SurfaceCard)
         ) {
             Column {
+                SettingsSwitchItem(
+                    title = "开启显示外部联动和自动化功能",
+                    subtitle = "在设置中显示“外部联动与自动化”选项卡，允许配置系统广播与外置驱动 (默认: 关闭)",
+                    checked = state.enableExternalAutomation,
+                    onCheckedChange = onToggleEnableExternalAutomation
+                )
+
                 SettingsSwitchItem(
                     title = "开启虚拟数据演示按钮",
                     subtitle = "在仪表盘显示仿真演示按钮，用于无外置硬件时模拟 RF 信号流 (默认: 关闭)",
@@ -472,5 +553,15 @@ fun SettingsSwitchItem(
                 uncheckedTrackColor = SurfaceSecondary
             )
         )
+    }
+}
+
+private fun formatFileSize(bytes: Long): String {
+    if (bytes <= 0L) return "0 KB"
+    val kb = bytes / 1024.0
+    return if (kb < 1024.0) {
+        String.format(Locale.US, "%.1f KB", kb)
+    } else {
+        String.format(Locale.US, "%.2f MB", kb / 1024.0)
     }
 }

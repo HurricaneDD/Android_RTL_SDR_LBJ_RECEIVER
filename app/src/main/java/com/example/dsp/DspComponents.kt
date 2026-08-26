@@ -18,6 +18,7 @@ class ComplexBuffer(val size: Int) {
 
 /**
  * _D0: IQ DC offset correction and IQ amplitude gain balance.
+ * Zero-allocation in-place branchless processing.
  */
 class IqCorrection {
     private var dcI: Float = 0.0f
@@ -27,45 +28,46 @@ class IqCorrection {
     fun process(buffer: ComplexBuffer) {
         val n = buffer.size
         if (n == 0) return
+        val real = buffer.real
+        val imag = buffer.imag
+        val curDcI = dcI
+        val curDcQ = dcQ
+        val curGr = gr
+
         var sumI = 0.0
         var sumQ = 0.0
-        for (k in 0 until n) {
-            sumI += buffer.real[k]
-            sumQ += buffer.imag[k]
-        }
-        val meanI = (sumI / n).toFloat()
-        val meanQ = (sumQ / n).toFloat()
-
-        dcI += 0.001f * (meanI - dcI)
-        dcQ += 0.001f * (meanQ - dcQ)
-
         var sumII = 0.0
         var sumQQ = 0.0
+
         for (k in 0 until n) {
-            val iVal = buffer.real[k] - dcI
-            val qVal = buffer.imag[k] - dcQ
-            buffer.real[k] = iVal
-            buffer.imag[k] = qVal
+            val iVal = real[k] - curDcI
+            val qVal = (imag[k] - curDcQ) * curGr
+            real[k] = iVal
+            imag[k] = qVal
+
+            sumI += iVal
+            sumQ += qVal
             sumII += (iVal * iVal)
             sumQQ += (qVal * qVal)
         }
 
-        val pi = (sumII / n).toFloat()
-        val pq = (sumQQ / n).toFloat()
+        val invN = 1.0f / n
+        dcI += 0.001f * (sumI * invN).toFloat()
+        dcQ += 0.001f * (sumQ * invN).toFloat()
+
+        val pi = (sumII * invN).toFloat()
+        val pq = (sumQQ * invN).toFloat()
         if (pi > 1e-20f) {
             val targetGr = sqrt(pq / pi)
             gr += 0.0001f * (targetGr - gr)
             gr = gr.coerceIn(0.9f, 1.1f)
-            for (k in 0 until n) {
-                buffer.imag[k] *= gr
-            }
         }
     }
 }
 
 /**
  * _D1: Ultra-fast Direct Digital Synthesis (DDS) Digital Down Converter.
- * Uses 4096-entry sine/cosine lookup tables and 32-bit fixed point phase accumulator.
+ * 4096-entry lookup tables and 32-bit fixed point phase accumulator with 0-allocation.
  */
 class Ddc(val sampleRate: Double, var offsetHz: Double = 0.0) {
     companion object {
@@ -75,8 +77,8 @@ class Ddc(val sampleRate: Double, var offsetHz: Double = 0.0) {
         private val cosTable = FloatArray(TABLE_SIZE) { i -> cos(2.0 * PI * i / TABLE_SIZE).toFloat() }
     }
 
-    private var phaseAcc: Long = 0L
-    private var phaseStep: Long = 0L
+    private var phaseAcc: Int = 0
+    private var phaseStep: Int = 0
 
     init {
         updateStep()
@@ -84,7 +86,7 @@ class Ddc(val sampleRate: Double, var offsetHz: Double = 0.0) {
 
     private fun updateStep() {
         val normalized = (-offsetHz / sampleRate)
-        phaseStep = (normalized * 4294967296.0).toLong()
+        phaseStep = (normalized * 4294967296.0).toInt()
     }
 
     fun setOffset(newOffsetHz: Double) {
@@ -99,8 +101,8 @@ class Ddc(val sampleRate: Double, var offsetHz: Double = 0.0) {
     fun process(buffer: ComplexBuffer) {
         if (kotlin.math.abs(offsetHz) < 0.1) return
         val n = buffer.size
-        var ph = phaseAcc
         val step = phaseStep
+        var ph = phaseAcc
 
         val real = buffer.real
         val imag = buffer.imag
@@ -108,13 +110,12 @@ class Ddc(val sampleRate: Double, var offsetHz: Double = 0.0) {
         val cTab = cosTable
 
         for (k in 0 until n) {
-            val idx = ((ph ushr 20).toInt()) and TABLE_MASK
+            val idx = (ph ushr 20) and TABLE_MASK
             val cosV = cTab[idx]
             val sinV = sTab[idx]
             val i = real[k]
             val q = imag[k]
 
-            // (i + j*q) * (cos + j*sin) = (i*cos - q*sin) + j*(i*sin + q*cos)
             real[k] = i * cosV - q * sinV
             imag[k] = i * sinV + q * cosV
 
@@ -126,16 +127,36 @@ class Ddc(val sampleRate: Double, var offsetHz: Double = 0.0) {
 
 /**
  * High-performance polyphase Halfband Decimator (decimate by 2).
- * Evaluates only non-zero symmetric filter taps directly at downsampled indices.
+ * Fast branchless inner loop with symmetric FIR coefficients and zero-allocations.
  */
 class HalfbandDecimator(numTaps: Int = 31) {
     private val h = FirDesign.halfband(numTaps)
     private val nt = h.size
     private val centerTap = (nt - 1) / 2
     private val centerCoeff = h[centerTap]
+
+    private val pairOffsets: IntArray
+    private val pairCoeffs: FloatArray
+    private val numPairs: Int
+
     private val prevTailReal = FloatArray(nt)
     private val prevTailImag = FloatArray(nt)
     private var hasHistory = false
+
+    init {
+        val offsets = mutableListOf<Int>()
+        val coeffs = mutableListOf<Float>()
+        for (d in 1..centerTap) {
+            val c = h[centerTap + d]
+            if (kotlin.math.abs(c) > 1e-7f) {
+                offsets.add(d)
+                coeffs.add(c)
+            }
+        }
+        numPairs = offsets.size
+        pairOffsets = offsets.toIntArray()
+        pairCoeffs = coeffs.toFloatArray()
+    }
 
     fun process(input: ComplexBuffer, output: ComplexBuffer) {
         val inLen = input.size
@@ -144,9 +165,16 @@ class HalfbandDecimator(numTaps: Int = 31) {
         val inI = input.imag
         val outR = output.real
         val outI = output.imag
+        val cCoeff = centerCoeff
+        val pOffsets = pairOffsets
+        val pCoeffs = pairCoeffs
+        val nPairs = numPairs
+        val cTap = centerTap
 
-        // Combine history + input seamlessly
-        for (k in 0 until outLen) {
+        val boundaryCount = min(outLen, centerTap)
+
+        // Boundary region: first few samples where taps can reach into prevTail history
+        for (k in 0 until boundaryCount) {
             val inIdx = k * 2
             var sumR = 0.0f
             var sumI = 0.0f
@@ -168,6 +196,24 @@ class HalfbandDecimator(numTaps: Int = 31) {
                 sumR += coeff * r
                 sumI += coeff * i
             }
+            outR[k] = sumR
+            outI[k] = sumI
+        }
+
+        // Fast branchless inner loop: symmetric coefficient pairs
+        for (k in boundaryCount until outLen) {
+            val cPos = (k * 2) - cTap
+            var sumR = inR[cPos] * cCoeff
+            var sumI = inI[cPos] * cCoeff
+
+            for (p in 0 until nPairs) {
+                val d = pOffsets[p]
+                val coeff = pCoeffs[p]
+                val rSum = inR[cPos - d] + inR[cPos + d]
+                val iSum = inI[cPos - d] + inI[cPos + d]
+                sumR += rSum * coeff
+                sumI += iSum * coeff
+            }
 
             outR[k] = sumR
             outI[k] = sumI
@@ -184,7 +230,7 @@ class HalfbandDecimator(numTaps: Int = 31) {
 
 /**
  * High-performance Decimating Lowpass Channel FIR Filter (240 kHz -> 48 kHz, factor of 5).
- * Only computes convolution at output points (5k), reducing computation by 80x.
+ * Optimized branchless FIR decimation with symmetric coefficient folding.
  */
 class DecimatingChannelFilter(
     srIn: Double = DspConstants.MID_RATE.toDouble(),
@@ -195,6 +241,10 @@ class DecimatingChannelFilter(
     val decimation: Int = (srIn / srOut).toInt()
     private val h = FirDesign.firwinLowPass(numTaps, cutoffHz, srIn)
     private val nt = h.size
+    private val centerTap = (nt - 1) / 2
+    private val centerCoeff = h[centerTap]
+    private val pairCoeffs = FloatArray(centerTap + 1) { d -> h[centerTap + d] }
+
     private val prevTailReal = FloatArray(nt)
     private val prevTailImag = FloatArray(nt)
     private var hasHistory = false
@@ -206,8 +256,13 @@ class DecimatingChannelFilter(
         val inI = input.imag
         val outR = output.real
         val outI = output.imag
+        val cCoeff = centerCoeff
+        val pCoeffs = pairCoeffs
+        val cTap = centerTap
 
-        for (k in 0 until outLen) {
+        val boundaryCount = min(outLen, (nt / decimation) + 1)
+
+        for (k in 0 until boundaryCount) {
             val inIdx = k * decimation
             var sumR = 0.0f
             var sumI = 0.0f
@@ -227,6 +282,22 @@ class DecimatingChannelFilter(
                 }
                 sumR += coeff * r
                 sumI += coeff * i
+            }
+            outR[k] = sumR
+            outI[k] = sumI
+        }
+
+        for (k in boundaryCount until outLen) {
+            val cPos = (k * decimation) - cTap
+            var sumR = inR[cPos] * cCoeff
+            var sumI = inI[cPos] * cCoeff
+
+            for (d in 1..cTap) {
+                val coeff = pCoeffs[d]
+                val rSum = inR[cPos - d] + inR[cPos + d]
+                val iSum = inI[cPos - d] + inI[cPos + d]
+                sumR += rSum * coeff
+                sumI += iSum * coeff
             }
 
             outR[k] = sumR

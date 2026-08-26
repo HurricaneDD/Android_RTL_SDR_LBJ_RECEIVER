@@ -14,11 +14,13 @@ import com.example.decoder.TrainTelemetry
 import com.example.driver.DriverLauncher
 import com.example.driver.RtlTcpClient
 import com.example.driver.SignalSimulator
+import com.example.dsp.ComplexBuffer
 import com.example.dsp.DspConstants
 import com.example.dsp.DspFrontend
 import com.example.dsp.FftProcessor
 import com.example.dsp.RssiGate
 import com.example.service.LbjKeepAliveService
+import com.example.util.LbjPreferences
 import com.example.util.SoundAlertManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -59,18 +61,25 @@ data class ReceiverState(
     val warningTime: Long = 0L,
     val broadcastAlerts: Boolean = true,
     val alertToneEnabled: Boolean = false,
+    val alertNotificationEnabled: Boolean = false,
     val keepAliveEnabled: Boolean = false,
     val showSimulationButton: Boolean = false,
+    val ttsEngineMode: String = "auto",
+    val enableExternalAutomation: Boolean = false,
+    val ttsCacheCount: Int = 0,
+    val ttsCacheBytes: Long = 0L,
     val showSignalLossDialog: Boolean = false,
     val spectrumBars: FloatArray = FloatArray(32) { -120.0f },
     val peakFreqHz: Double? = null,
     val peakDeltaHz: Double? = null,
     val peakDb: Float? = null,
-    val currentRouteStationKmText: String = "---"
+    val currentRouteStationKmText: String = "---",
+    val fps: Float = 0.0f
 )
 
 class LbjViewModel(application: Application) : AndroidViewModel(application) {
 
+    private val prefs = LbjPreferences(application)
     private val db = LbjDatabase.getDatabase(application)
     private val dao = db.lbjDao()
 
@@ -80,7 +89,25 @@ class LbjViewModel(application: Application) : AndroidViewModel(application) {
     val savedRouteKms = dao.getAllRouteStationKms()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
-    private val _receiverState = MutableStateFlow(ReceiverState())
+    private val _receiverState = MutableStateFlow(
+        ReceiverState(
+            freqHz = prefs.freqHz,
+            gainDb = prefs.gainDb,
+            ppm = prefs.ppm,
+            csThresholdDb = prefs.csThresholdDb,
+            strictFilter = prefs.strictFilter,
+            showErrWarn = prefs.showErrWarn,
+            filterMode = prefs.filterMode,
+            keywords = prefs.keywords,
+            broadcastAlerts = prefs.broadcastAlerts,
+            alertToneEnabled = prefs.alertToneEnabled,
+            alertNotificationEnabled = prefs.alertNotificationEnabled,
+            keepAliveEnabled = prefs.keepAliveEnabled,
+            showSimulationButton = prefs.showSimulationButton,
+            ttsEngineMode = prefs.ttsEngineMode,
+            enableExternalAutomation = prefs.enableExternalAutomation
+        )
+    )
     val receiverState: StateFlow<ReceiverState> = _receiverState.asStateFlow()
 
     private val _liveTelemetry = MutableStateFlow(TrainTelemetry())
@@ -90,7 +117,7 @@ class LbjViewModel(application: Application) : AndroidViewModel(application) {
     val liveEta: StateFlow<EtaInfo> = _liveEta.asStateFlow()
 
     private val arrivalEstimator = ArrivalEstimator()
-    private val rssiGate = RssiGate()
+    private val rssiGate = RssiGate(onDb = prefs.csThresholdDb)
     private val fftProcessor = FftProcessor()
     private val simulator = SignalSimulator()
 
@@ -102,28 +129,32 @@ class LbjViewModel(application: Application) : AndroidViewModel(application) {
     )
 
     private val rtlClient = RtlTcpClient(
-        initialFreqHz = DspConstants.DEFAULT_FREQ_HZ,
+        initialFreqHz = prefs.freqHz,
         dcOffsetHz = DspConstants.DEFAULT_DC_OFFSET_HZ,
-        initialGainDb = DspConstants.HW_GAIN_DB,
-        initialPpm = DspConstants.PPM
+        initialGainDb = prefs.gainDb,
+        initialPpm = prefs.ppm
     )
 
     private val decoder = LbjDecoder(
         arrivalEstimator = arrivalEstimator,
-        strictFilter = true,
-        showErrWarn = true,
-        filterMode = "highlight",
-        keywords = emptyList()
+        strictFilter = prefs.strictFilter,
+        showErrWarn = prefs.showErrWarn,
+        filterMode = prefs.filterMode,
+        keywords = prefs.keywords
     )
 
     private var dspJob: Job? = null
+    private var fftJob: Job? = null
     private var lastPeakValue: Float? = null
     private var lastPeakChangeTime: Long = 0L
     private var hasShownSignalLossDialog: Boolean = false
 
-    private val soundAlertManager = SoundAlertManager(viewModelScope)
+    private val fftChannel = kotlinx.coroutines.channels.Channel<Unit>(kotlinx.coroutines.channels.Channel.CONFLATED)
+
+    private val soundAlertManager = SoundAlertManager(getApplication(), viewModelScope)
     private var lastDecodedTrainNo: String = ""
     private var lastAlertPlayTime: Long = 0L
+    private var currentTrainSignalCount: Int = 0
 
     // Train Session Tracking (Single history record per train pass)
     private var activeTrainRecordId: Long? = null
@@ -131,26 +162,14 @@ class LbjViewModel(application: Application) : AndroidViewModel(application) {
     private var lastValidTelemetryTime: Long = 0L
 
     init {
-        // Load initial route KM mappings from Room
+        // Refresh TTS audio cache stats
+        refreshTtsCacheInfo()
+
+        // Load saved route KM mappings from Room (No dummy seed routes)
         viewModelScope.launch(Dispatchers.IO) {
             val list = dao.getAllRouteStationKmsList()
-            if (list.isEmpty()) {
-                val defaults = listOf(
-                    RouteStationKmEntity("京沪高铁", 145.8, System.currentTimeMillis()),
-                    RouteStationKmEntity("京沪线", 1300.2, System.currentTimeMillis()),
-                    RouteStationKmEntity("陇海线", 250.0, System.currentTimeMillis()),
-                    RouteStationKmEntity("京津城际", 80.0, System.currentTimeMillis()),
-                    RouteStationKmEntity("京九线", 350.0, System.currentTimeMillis()),
-                    RouteStationKmEntity("杭深线", 120.0, System.currentTimeMillis())
-                )
-                for (d in defaults) {
-                    dao.insertRouteStationKm(d)
-                    arrivalEstimator.setRouteKm(d.routeName, d.stationKm)
-                }
-            } else {
-                for (item in list) {
-                    arrivalEstimator.setRouteKm(item.routeName, item.stationKm)
-                }
+            for (item in list) {
+                arrivalEstimator.setRouteKm(item.routeName, item.stationKm)
             }
         }
 
@@ -161,15 +180,40 @@ class LbjViewModel(application: Application) : AndroidViewModel(application) {
             _liveTelemetry.value = telemetry
             _liveEta.value = eta
 
-            // Play 2-second alert tone on train signal decode or train change if enabled
-            if (_receiverState.value.alertToneEnabled && telemetry.trainNo != "----") {
-                val isTrainChanged = (lastDecodedTrainNo.isNotEmpty() && lastDecodedTrainNo != telemetry.trainNo)
-                val isNewSignal = (lastDecodedTrainNo.isEmpty() || (now - lastAlertPlayTime > 4000L))
+            // Play alert sound & speak announcement immediately upon train detection
+            val currentNo = telemetry.trainNo
+            if (currentNo != "----" && currentNo.isNotBlank()) {
+                val isSameTrain = (activeTrainNo == currentNo)
+                if (!isSameTrain) {
+                    currentTrainSignalCount = 1
+                    activeTrainNo = currentNo
+                    if (_receiverState.value.alertToneEnabled) {
+                        val speechText = SoundAlertManager.buildTrainAlertSpeechText(
+                            locoModel = telemetry.locoModel,
+                            route = telemetry.route,
+                            direction = telemetry.direction,
+                            speedKmH = telemetry.speed,
+                            trainNo = currentNo
+                        )
+                        soundAlertManager.playAlertAndSpeak(speechText, _receiverState.value.ttsEngineMode)
+                    }
 
-                if (isTrainChanged || isNewSignal) {
-                    lastDecodedTrainNo = telemetry.trainNo
-                    lastAlertPlayTime = now
-                    soundAlertManager.playAlertTone()
+                    if (_receiverState.value.alertNotificationEnabled) {
+                        sendTrainNotification(
+                            trainNo = currentNo,
+                            route = telemetry.route,
+                            direction = telemetry.direction,
+                            locoModel = telemetry.locoModel,
+                            speed = telemetry.speed
+                        )
+                    }
+                } else {
+                    currentTrainSignalCount++
+                    if (currentTrainSignalCount % 4 == 0) {
+                        if (_receiverState.value.alertToneEnabled) {
+                            soundAlertManager.playDoubleBeep()
+                        }
+                    }
                 }
             }
 
@@ -280,10 +324,14 @@ class LbjViewModel(application: Application) : AndroidViewModel(application) {
             isRunning = true,
             isSimulationMode = isSimulation,
             showSignalLossDialog = false,
-            warningMessage = if (isSimulation) "已开启 RF 信号仿真流演示模式 (每5秒模拟报文)" else ""
+            warningMessage = if (isSimulation) "已开启 RF 信号仿真流演示模式 (每15秒模拟报文)" else ""
         )
 
         if (!isSimulation) {
+            // Automatically attempt to drive/launch driver before connecting
+            try {
+                launchAndroidDriver()
+            } catch (_: Exception) {}
             rtlClient.open()
         }
 
@@ -297,29 +345,71 @@ class LbjViewModel(application: Application) : AndroidViewModel(application) {
 
         dspJob = viewModelScope.launch(Dispatchers.Default) {
             try {
+                Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_AUDIO)
+            } catch (_: Exception) {}
+            try {
+                runDspLoop(isSimulation)
+            } catch (_: Exception) {}
+        }
+
+        // Dedicated FFT worker coroutine on a separate thread pool to distribute load to other CPU cores
+        fftJob = viewModelScope.launch(Dispatchers.IO) {
+            try {
                 Process.setThreadPriority(Process.THREAD_PRIORITY_MORE_FAVORABLE)
             } catch (_: Exception) {}
-            runDspLoop(isSimulation)
+            try {
+                runFftWorker()
+            } catch (_: Exception) {}
+        }
+    }
+
+    private val fftBuffer = ComplexBuffer(512)
+
+    private suspend fun runFftWorker() {
+        for (unit in fftChannel) {
+            if (!_receiverState.value.isRunning) break
+            val curState = _receiverState.value
+            val hwFreq = curState.freqHz - curState.dcOffsetHz
+            val fftRes = fftProcessor.process(
+                iqBuffer = fftBuffer,
+                sampleRate = DspConstants.RTL_SAMPLE_RATE.toDouble(),
+                hwFreqHz = hwFreq,
+                targetFreqHz = curState.freqHz,
+                bwKhz = curState.bwKhz
+            )
+
+            // Update spectrum & peak metrics without blocking the main DSP demodulation thread
+            _receiverState.value = _receiverState.value.copy(
+                spectrumBars = fftRes.bandsDb.clone(),
+                peakFreqHz = fftRes.peakInfo.peakFreqHz,
+                peakDeltaHz = fftRes.peakInfo.peakDeltaHz,
+                peakDb = fftRes.peakInfo.peakDb
+            )
         }
     }
 
     fun stopReceiver() {
         dspJob?.cancel()
         dspJob = null
+        fftJob?.cancel()
+        fftJob = null
         rtlClient.close()
 
         // Finalize active train session in DB
         finalizeActiveTrainSession()
 
         lastDecodedTrainNo = ""
+        currentTrainSignalCount = 0
         clearLiveTelemetry()
 
-        if (_receiverState.value.keepAliveEnabled) {
-            LbjKeepAliveService.stop(getApplication())
-        }
+        // Always stop keep alive service and clean up notifications when stopping receiver
+        LbjKeepAliveService.stop(getApplication())
 
         _receiverState.value = _receiverState.value.copy(
             isRunning = false,
+            isSimulationMode = false,
+            warningMessage = "",
+            fps = 0.0f,
             spectrumBars = FloatArray(32) { -120.0f },
             peakFreqHz = null,
             peakDeltaHz = null,
@@ -342,6 +432,7 @@ class LbjViewModel(application: Application) : AndroidViewModel(application) {
             }
             activeTrainRecordId = null
             activeTrainNo = null
+            currentTrainSignalCount = 0
         }
     }
 
@@ -353,6 +444,9 @@ class LbjViewModel(application: Application) : AndroidViewModel(application) {
         val resetAfcOnRelease = true
         var lastUiUpdateTime = 0L
         var nextSimTime = System.currentTimeMillis()
+        var lastFpsCalcTime = System.currentTimeMillis()
+        var frameCountInSec = 0
+        var currentFps = 0.0f
 
         while (viewModelScope.isActive && _receiverState.value.isRunning) {
             val iq = if (isSimulation) {
@@ -371,7 +465,10 @@ class LbjViewModel(application: Application) : AndroidViewModel(application) {
                 val block = rtlClient.readBlock(50)
                 if (block == null) {
                     val nowMs = System.currentTimeMillis()
-                    if (nowMs - lastPeakChangeTime >= 3000L && !hasShownSignalLossDialog && !_receiverState.value.isSimulationMode) {
+                    val isConnectionRefused = _receiverState.value.warningMessage.contains("连接被拒") ||
+                            _receiverState.value.connectionState == RtlTcpClient.ConnectionState.ERROR ||
+                            _receiverState.value.connectionState == RtlTcpClient.ConnectionState.DISCONNECTED
+                    if (nowMs - lastPeakChangeTime >= 3000L && !hasShownSignalLossDialog && !_receiverState.value.isSimulationMode && !isConnectionRefused) {
                         hasShownSignalLossDialog = true
                         _receiverState.value = _receiverState.value.copy(showSignalLossDialog = true)
                     }
@@ -392,6 +489,7 @@ class LbjViewModel(application: Application) : AndroidViewModel(application) {
                 if (nowMs - lastValidTelemetryTime > 10000L) {
                     finalizeActiveTrainSession()
                     clearLiveTelemetry()
+                    currentTrainSignalCount = 0
                     if (_receiverState.value.keepAliveEnabled) {
                         LbjKeepAliveService.update(
                             getApplication(),
@@ -408,32 +506,30 @@ class LbjViewModel(application: Application) : AndroidViewModel(application) {
                 _receiverState.value = _receiverState.value.copy(warningMessage = "")
             }
 
-            // 1. Process FFT & spectrum
-            val curState = _receiverState.value
-            val hwFreq = curState.freqHz - curState.dcOffsetHz
-            val fftRes = fftProcessor.process(
-                iqBuffer = iq,
-                sampleRate = DspConstants.RTL_SAMPLE_RATE.toDouble(),
-                hwFreqHz = hwFreq,
-                targetFreqHz = curState.freqHz,
-                bwKhz = curState.bwKhz
-            )
+            // 1. Offload FFT & spectrum processing to dedicated background thread pool
+            val fftN = minOf(512, iq.size)
+            System.arraycopy(iq.real, 0, fftBuffer.real, 0, fftN)
+            System.arraycopy(iq.imag, 0, fftBuffer.imag, 0, fftN)
+            fftChannel.trySend(Unit)
 
             // Detect peak freeze in real SDR reception mode (3 seconds with no change)
             if (!isSimulation) {
-                val curPeak = fftRes.peakInfo.peakDb
+                val isConnectionRefused = _receiverState.value.warningMessage.contains("连接被拒") ||
+                        _receiverState.value.connectionState == RtlTcpClient.ConnectionState.ERROR ||
+                        _receiverState.value.connectionState == RtlTcpClient.ConnectionState.DISCONNECTED
+                val curPeak = _receiverState.value.peakDb
                 if (curPeak == null || lastPeakValue == null || kotlin.math.abs(curPeak - (lastPeakValue ?: 0f)) > 0.001f) {
                     lastPeakValue = curPeak
                     lastPeakChangeTime = nowMs
                 } else {
-                    if (nowMs - lastPeakChangeTime >= 3000L && !hasShownSignalLossDialog) {
+                    if (nowMs - lastPeakChangeTime >= 3000L && !hasShownSignalLossDialog && !isConnectionRefused) {
                         hasShownSignalLossDialog = true
                         _receiverState.value = _receiverState.value.copy(showSignalLossDialog = true)
                     }
                 }
             }
 
-            // 2. Process DSP frontend chain
+            // 2. Process DSP frontend chain (DDC, Halfband, FIR Decimation, FM Demod)
             val dspRes = dspFrontend.process(iq, rssiGate)
 
             // 3. Check AFC update
@@ -455,9 +551,16 @@ class LbjViewModel(application: Application) : AndroidViewModel(application) {
                 rtlClient.recycleBuffer(iq)
             }
 
-            // Update UI state with 60ms throttle for ultra-responsive spectrum and demodulation metrics
+            frameCountInSec++
+            if (nowMs - lastFpsCalcTime >= 1000L) {
+                currentFps = (frameCountInSec * 1000.0f) / (nowMs - lastFpsCalcTime)
+                frameCountInSec = 0
+                lastFpsCalcTime = nowMs
+            }
+
+            // Update UI state with 50ms throttle for responsive demodulation metrics
             val stateChanged = rssiGate.justActivated || rssiGate.justDeactivated
-            if (stateChanged || nowMs - lastUiUpdateTime >= 60L) {
+            if (stateChanged || nowMs - lastUiUpdateTime >= 50L) {
                 lastUiUpdateTime = nowMs
                 val curRoute = _liveTelemetry.value.route
                 val routeKm = arrivalEstimator.getKmForRoute(curRoute)
@@ -470,11 +573,8 @@ class LbjViewModel(application: Application) : AndroidViewModel(application) {
                     afcHz = dspFrontend.afc.afcHz,
                     afcErrHz = dspFrontend.afc.lastErrHz,
                     afcScore = dspFrontend.afc.lastScore,
-                    spectrumBars = fftRes.bandsDb.clone(),
-                    peakFreqHz = fftRes.peakInfo.peakFreqHz,
-                    peakDeltaHz = fftRes.peakInfo.peakDeltaHz,
-                    peakDb = fftRes.peakInfo.peakDb,
-                    currentRouteStationKmText = routeKmText
+                    currentRouteStationKmText = routeKmText,
+                    fps = currentFps
                 )
             }
         }
@@ -483,6 +583,7 @@ class LbjViewModel(application: Application) : AndroidViewModel(application) {
     // Tuning controls
     fun setFrequency(freqMhz: Double) {
         val freqHz = freqMhz * 1_000_000.0
+        prefs.freqHz = freqHz
         _receiverState.value = _receiverState.value.copy(freqHz = freqHz)
         rtlClient.setFrequency(freqHz)
         dspFrontend.resetAfc()
@@ -490,11 +591,13 @@ class LbjViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun setGain(gainDb: Float) {
+        prefs.gainDb = gainDb
         _receiverState.value = _receiverState.value.copy(gainDb = gainDb)
         rtlClient.setGain(gainDb)
     }
 
     fun setPpm(ppm: Int) {
+        prefs.ppm = ppm
         _receiverState.value = _receiverState.value.copy(ppm = ppm)
         rtlClient.setPpm(ppm)
         dspFrontend.resetAfc()
@@ -502,39 +605,52 @@ class LbjViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun setCsThreshold(thresholdDb: Float) {
+        prefs.csThresholdDb = thresholdDb
         _receiverState.value = _receiverState.value.copy(csThresholdDb = thresholdDb)
         rssiGate.setThreshold(thresholdDb)
     }
 
     fun setStrictFilter(enabled: Boolean) {
+        prefs.strictFilter = enabled
         _receiverState.value = _receiverState.value.copy(strictFilter = enabled)
         decoder.strictFilter = enabled
     }
 
     fun setShowErrWarn(enabled: Boolean) {
+        prefs.showErrWarn = enabled
         _receiverState.value = _receiverState.value.copy(showErrWarn = enabled)
         decoder.showErrWarn = enabled
     }
 
     fun setFilterMode(mode: String) {
+        prefs.filterMode = mode
         _receiverState.value = _receiverState.value.copy(filterMode = mode)
         decoder.filterMode = mode
     }
 
     fun setKeywords(kwList: List<String>) {
+        prefs.keywords = kwList
         _receiverState.value = _receiverState.value.copy(keywords = kwList)
         decoder.keywords = kwList
     }
 
     fun setBroadcastAlerts(enabled: Boolean) {
+        prefs.broadcastAlerts = enabled
         _receiverState.value = _receiverState.value.copy(broadcastAlerts = enabled)
     }
 
     fun setAlertToneEnabled(enabled: Boolean) {
+        prefs.alertToneEnabled = enabled
         _receiverState.value = _receiverState.value.copy(alertToneEnabled = enabled)
     }
 
+    fun setAlertNotificationEnabled(enabled: Boolean) {
+        prefs.alertNotificationEnabled = enabled
+        _receiverState.value = _receiverState.value.copy(alertNotificationEnabled = enabled)
+    }
+
     fun setKeepAliveEnabled(enabled: Boolean) {
+        prefs.keepAliveEnabled = enabled
         _receiverState.value = _receiverState.value.copy(keepAliveEnabled = enabled)
         if (enabled && _receiverState.value.isRunning) {
             LbjKeepAliveService.start(
@@ -548,10 +664,36 @@ class LbjViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun setShowSimulationButton(enabled: Boolean) {
+        prefs.showSimulationButton = enabled
         _receiverState.value = _receiverState.value.copy(showSimulationButton = enabled)
     }
 
+    fun setTtsEngineMode(mode: String) {
+        prefs.ttsEngineMode = mode
+        _receiverState.value = _receiverState.value.copy(ttsEngineMode = mode)
+    }
+
+    fun setEnableExternalAutomation(enabled: Boolean) {
+        prefs.enableExternalAutomation = enabled
+        _receiverState.value = _receiverState.value.copy(enableExternalAutomation = enabled)
+    }
+
+    fun refreshTtsCacheInfo() {
+        val (count, bytes) = soundAlertManager.getTtsCacheInfo()
+        _receiverState.value = _receiverState.value.copy(
+            ttsCacheCount = count,
+            ttsCacheBytes = bytes
+        )
+    }
+
+    fun clearTtsCache(): Pair<Int, Long> {
+        val result = soundAlertManager.clearTtsCache()
+        refreshTtsCacheInfo()
+        return result
+    }
+
     fun resetAllSettings() {
+        prefs.resetAll()
         setFrequency(DspConstants.DEFAULT_FREQ_HZ / 1_000_000.0)
         setGain(DspConstants.HW_GAIN_DB)
         setPpm(DspConstants.PPM)
@@ -562,11 +704,14 @@ class LbjViewModel(application: Application) : AndroidViewModel(application) {
         setKeywords(emptyList())
         setBroadcastAlerts(true)
         setAlertToneEnabled(false)
+        setAlertNotificationEnabled(false)
         setKeepAliveEnabled(false)
         setShowSimulationButton(false)
+        setTtsEngineMode("auto")
+        setEnableExternalAutomation(false)
     }
 
-    fun setRouteStationKm(routeName: String, stationKm: Double) {
+    fun setRouteStationKm(routeName: String, stationKm: Double, nickname: String = "") {
         arrivalEstimator.setRouteKm(routeName, stationKm)
         recomputeEta()
         viewModelScope.launch(Dispatchers.IO) {
@@ -574,6 +719,7 @@ class LbjViewModel(application: Application) : AndroidViewModel(application) {
                 RouteStationKmEntity(
                     routeName = routeName,
                     stationKm = stationKm,
+                    nickname = nickname,
                     updatedTimestamp = System.currentTimeMillis()
                 )
             )
@@ -646,6 +792,97 @@ class LbjViewModel(application: Application) : AndroidViewModel(application) {
 
     fun openDriverAppSettings() {
         DriverLauncher.openDriverAppSettings(getApplication())
+    }
+
+    private var testVoiceSampleIndex = 0
+
+    fun testVoiceBroadcast() {
+        val samples = listOf(
+            Triple("HXD3D-5033", "G102", "310"),
+            Triple("CR400AF-2001", "G1", "350"),
+            Triple("FXD1-J-0001", "D727", "160"),
+            Triple("DF4D-1000", "K8401", "120")
+        )
+        val currentSample = samples[testVoiceSampleIndex % samples.size]
+        testVoiceSampleIndex++
+
+        val sampleText = SoundAlertManager.buildTrainAlertSpeechText(
+            locoModel = currentSample.first,
+            route = "京沪高铁",
+            direction = "下行",
+            speedKmH = currentSample.third,
+            trainNo = currentSample.second
+        )
+        soundAlertManager.playAlertAndSpeak(sampleText, _receiverState.value.ttsEngineMode)
+
+        if (_receiverState.value.alertNotificationEnabled) {
+            sendTrainNotification(
+                trainNo = currentSample.second,
+                route = "京沪高铁",
+                direction = "下行",
+                locoModel = currentSample.first,
+                speed = currentSample.third
+            )
+        }
+    }
+
+    private fun sendTrainNotification(
+        trainNo: String,
+        route: String,
+        direction: String,
+        locoModel: String,
+        speed: String
+    ) {
+        try {
+            val app = getApplication<Application>()
+            val notificationManager = app.getSystemService(android.content.Context.NOTIFICATION_SERVICE) as? android.app.NotificationManager ?: return
+            
+            val channelId = "lbj_train_alert_notification_channel"
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                val channel = android.app.NotificationChannel(
+                    channelId,
+                    "SDR-LBJ 来车提醒通知",
+                    android.app.NotificationManager.IMPORTANCE_HIGH
+                ).apply {
+                    description = "发现来车报文时弹出的即时提醒通知"
+                    enableLights(true)
+                    enableVibration(true)
+                }
+                notificationManager.createNotificationChannel(channel)
+            }
+
+            val routeStr = if (route.isNotBlank() && route != "----") route else "线路"
+            val directionStr = if (direction.isNotBlank() && direction != "----") direction else ""
+            val routePart = if (directionStr.isNotBlank()) "$routeStr-$directionStr" else routeStr
+
+            val title = "车次：$trainNo | $routePart"
+            val locoStr = if (locoModel.isNotBlank() && locoModel != "----") locoModel else "未知机车"
+            val speedStr = if (speed.isNotBlank() && speed != "----") speed else "0"
+            val content = "机车：$locoStr | 速度：$speedStr KM/H"
+
+            val launchIntent = android.content.Intent(app, com.example.MainActivity::class.java).apply {
+                flags = android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP or android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP
+            }
+            val pendingIntent = android.app.PendingIntent.getActivity(
+                app,
+                System.currentTimeMillis().toInt(),
+                launchIntent,
+                android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
+            )
+
+            val notification = androidx.core.app.NotificationCompat.Builder(app, channelId)
+                .setSmallIcon(com.example.R.drawable.ic_lbj_notification)
+                .setContentTitle(title)
+                .setContentText(content)
+                .setPriority(androidx.core.app.NotificationCompat.PRIORITY_HIGH)
+                .setAutoCancel(true)
+                .setContentIntent(pendingIntent)
+                .setDefaults(androidx.core.app.NotificationCompat.DEFAULT_ALL)
+                .build()
+
+            val notificationId = 2000 + (System.currentTimeMillis() % 1000).toInt()
+            notificationManager.notify(notificationId, notification)
+        } catch (_: Exception) {}
     }
 
     override fun onCleared() {

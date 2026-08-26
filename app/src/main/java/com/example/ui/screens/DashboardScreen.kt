@@ -1,5 +1,8 @@
 package com.example.ui.screens
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -23,6 +26,7 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Sensors
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Usb
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
@@ -75,6 +79,7 @@ fun DashboardScreen(
     onOpenCsDialog: () -> Unit,
     onOpenWatchlistDialog: () -> Unit,
     onOpenFftExplanationDialog: () -> Unit,
+    onOpenTrainTypeRuleDialog: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val scrollState = rememberScrollState()
@@ -228,7 +233,7 @@ fun DashboardScreen(
                         }
                     }
 
-                    // 尝试驱动设备 (原联动驱动)
+                    // 尝试重新驱动设备 (原联动驱动)
                     OutlinedButton(
                         onClick = onLaunchDriver,
                         shape = RoundedCornerShape(8.dp),
@@ -252,7 +257,7 @@ fun DashboardScreen(
                                     .padding(end = 3.dp)
                             )
                             Text(
-                                text = "尝试驱动设备",
+                                text = "尝试重新驱动设备",
                                 color = PrimaryBlueDark,
                                 fontSize = 11.5.sp,
                                 fontWeight = FontWeight.Medium,
@@ -296,6 +301,38 @@ fun DashboardScreen(
                         }
                     }
                 }
+
+                // Red Warning Banner if present (e.g. 连接被拒, 已开启RF信号仿真流演示模式)
+                AnimatedVisibility(
+                    visible = state.warningMessage.isNotEmpty(),
+                    enter = fadeIn(),
+                    exit = fadeOut()
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 10.dp)
+                            .background(RedSoft, RoundedCornerShape(8.dp))
+                            .border(1.dp, RedAlert.copy(alpha = 0.3f), RoundedCornerShape(8.dp))
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Warning,
+                            contentDescription = "Warning",
+                            tint = RedAlert,
+                            modifier = Modifier
+                                .size(16.dp)
+                                .padding(end = 6.dp)
+                        )
+                        Text(
+                            text = state.warningMessage,
+                            color = RedAlert,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                }
             }
         }
 
@@ -317,6 +354,7 @@ fun DashboardScreen(
             peakFreqHz = state.peakFreqHz,
             peakDeltaHz = state.peakDeltaHz,
             peakDb = state.peakDb,
+            fps = state.fps,
             onClick = onOpenFftExplanationDialog
         )
 
@@ -327,7 +365,8 @@ fun DashboardScreen(
             telemetry = telemetry,
             etaInfo = etaInfo,
             warningMessage = state.warningMessage,
-            currentStationKmText = state.currentRouteStationKmText
+            currentStationKmText = state.currentRouteStationKmText,
+            onOpenTrainTypeRuleDialog = onOpenTrainTypeRuleDialog
         )
 
         Spacer(modifier = Modifier.height(14.dp))

@@ -5,11 +5,13 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -17,23 +19,29 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.ClickableText
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.RestartAlt
+import androidx.compose.material.icons.filled.Train
 import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material.icons.filled.ZoomIn
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
@@ -52,6 +60,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
@@ -67,6 +77,8 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import com.example.decoder.ArrivalEstimator
 import com.example.dsp.DspConstants
 import com.example.ui.theme.BorderLight
@@ -426,9 +438,11 @@ fun WatchlistDialog(
 fun RouteStationKmDialog(
     initialRoute: String = "",
     initialKm: Double? = null,
+    initialNickname: String = "",
     onDismiss: () -> Unit,
-    onConfirm: (String, Double) -> Unit
+    onConfirm: (String, Double, String) -> Unit
 ) {
+    var nicknameText by remember { mutableStateOf(initialNickname) }
     var routeText by remember { mutableStateOf(initialRoute) }
     var kmText by remember {
         mutableStateOf(
@@ -442,20 +456,28 @@ fun RouteStationKmDialog(
         onDismissRequest = onDismiss,
         containerColor = SurfaceCard,
         title = {
-            Text(text = "标定线路本站公里标", color = PrimaryBlueDark, fontWeight = FontWeight.Bold)
+            Text(text = "标定本站公里标", color = PrimaryBlueDark, fontWeight = FontWeight.Bold)
         },
         text = {
             Column {
                 Text(
-                    text = "支持里程标写法 (如 K145+800、K1300+200) 或纯数字公里数 (如 145.8)，以便精确计算列车到达时间与距离。",
+                    text = "设定你当前位于线路的大致位置，以估算列车到达时间。",
                     color = TextSecondary,
                     fontSize = 12.sp
                 )
                 Spacer(modifier = Modifier.height(12.dp))
                 OutlinedTextField(
+                    value = nicknameText,
+                    onValueChange = { nicknameText = it },
+                    label = { Text("本站位置/观察点昵称（如：中和桥道口、中华门站）") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                OutlinedTextField(
                     value = routeText,
                     onValueChange = { routeText = it },
-                    label = { Text("线路名称 (如: 京沪高铁 / 陇海线)") },
+                    label = { Text("线路名称（如：宁芜线、京沪高铁）") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -463,7 +485,7 @@ fun RouteStationKmDialog(
                 OutlinedTextField(
                     value = kmText,
                     onValueChange = { kmText = it },
-                    label = { Text("本站公里标 / 里程标 (如: K1300+200 或 1300.2)") },
+                    label = { Text("本站里程（如K130+200或130.2千米）") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -471,9 +493,12 @@ fun RouteStationKmDialog(
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
                         text = if (parsedKm != null) {
-                            "✔ 解析结果: ${ArrivalEstimator.formatMilestoneWithKm(parsedKm)}"
+                            val nickPrefix = if (nicknameText.isNotBlank()) "${nicknameText.trim()} → " else ""
+                            val rName = if (routeText.isNotBlank()) routeText.trim() else "线路"
+                            val kmStr = String.format(Locale.US, "%.3f", parsedKm).trimEnd('0').let { if (it.endsWith('.')) it + "0" else it }
+                            "✔ 解析结果: $nickPrefix$rName ${ArrivalEstimator.formatMilestone(parsedKm)}（${kmStr}KM）"
                         } else {
-                            "✖ 格式无法解析，请输入如 K145+800 或 145.8"
+                            "✖ 格式无法解析，请输入如 K130+200、130.2千米 或 130.2"
                         },
                         color = if (parsedKm != null) EmeraldGreen else RedAlert,
                         fontSize = 11.sp,
@@ -487,7 +512,7 @@ fun RouteStationKmDialog(
                 onClick = {
                     val r = routeText.trim()
                     if (r.isNotEmpty() && parsedKm != null) {
-                        onConfirm(r, parsedKm)
+                        onConfirm(r, parsedKm, nicknameText.trim())
                     }
                 },
                 enabled = routeText.isNotBlank() && parsedKm != null,
@@ -573,7 +598,7 @@ fun FftExplanationDialog(onDismiss: () -> Unit) {
                 )
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(
-                    text = "• 绿色/青色柱状图：表示对应频段的信号能量 (dB)。\n• 黄色中心垂直标尺：代表当前调谐的目标中心频率 (821.2375 MHz)。\n• 红色水平虚线：代表「静噪接收门限 (Squelch)」。只有当信号柱冲破红线时，软件才会启动解调与解码，防止将外界杂音当作列车报文。",
+                    text = "• 绿色折线：表示对应频段的信号能量 (dB)。\n• 黄色中心垂直标尺：代表当前调谐的目标中心频率 (821.2375 MHz)。\n• 红色水平虚线：代表「静噪接收门限 (Squelch)」。只有当信号折线冲破红线时，软件才会启动解调与解码，防止将外界杂音当作列车报文。",
                     color = TextSecondary,
                     fontSize = 12.sp,
                     lineHeight = 17.sp
@@ -702,9 +727,9 @@ fun AboutAppDialog(onDismiss: () -> Unit) {
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Spacer(modifier = Modifier.height(8.dp))
-                // App Launcher Icon
+                // App Launcher Vector Icon
                 Image(
-                    painter = painterResource(id = com.example.R.drawable.lbj_launcher_icon_1787301349738),
+                    painter = painterResource(id = com.example.R.drawable.ic_app_vector_icon),
                     contentDescription = "App Icon",
                     modifier = Modifier
                         .size(72.dp)
@@ -713,21 +738,28 @@ fun AboutAppDialog(onDismiss: () -> Unit) {
                 )
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    text = "SDR-LBJ (列车报警器)",
+                    text = "SDR-LBJ",
                     color = PrimaryBlueDark,
-                    fontSize = 16.sp,
+                    fontSize = 17.sp,
                     fontWeight = FontWeight.Bold
                 )
                 Text(
-                    text = "v1.0.0 (Build 1)",
+                    text = "v1.0.0 (Build 10)",
                     color = TextMuted,
                     fontSize = 12.sp,
+                    fontFamily = FontFamily.Monospace
+                )
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = "构建时间：2026-08-23 16:00",
+                    color = TextMuted,
+                    fontSize = 11.5.sp,
                     fontFamily = FontFamily.Monospace
                 )
 
                 Spacer(modifier = Modifier.height(16.dp))
 
-                // Author Info
+                // Module 1: Author Info
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -777,14 +809,13 @@ fun AboutAppDialog(onDismiss: () -> Unit) {
 
                 Spacer(modifier = Modifier.height(10.dp))
 
-                // Personal Website Card (Clickable to copy)
+                // Module 2: Personal Website Card (Clickable to copy, matching style)
                 val websiteUrl = "https://hurricanedd.github.io"
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(PrimaryBlueSoft)
-                        .border(1.dp, PrimaryBlue.copy(alpha = 0.3f), RoundedCornerShape(10.dp))
+                        .background(SurfaceSecondary, RoundedCornerShape(10.dp))
+                        .border(1.dp, BorderLight, RoundedCornerShape(10.dp))
                         .clickable { copyToClipboard(websiteUrl, "个人网站链接") }
                         .padding(12.dp)
                 ) {
@@ -798,12 +829,12 @@ fun AboutAppDialog(onDismiss: () -> Unit) {
                                 Icon(
                                     imageVector = Icons.Default.Link,
                                     contentDescription = null,
-                                    tint = PrimaryBlueDark,
+                                    tint = PrimaryBlue,
                                     modifier = Modifier.size(16.dp).padding(end = 4.dp)
                                 )
                                 Text(
                                     text = "个人网站 (点击复制)：",
-                                    color = PrimaryBlueDark,
+                                    color = TextPrimary,
                                     fontSize = 12.sp,
                                     fontWeight = FontWeight.Bold
                                 )
@@ -811,30 +842,28 @@ fun AboutAppDialog(onDismiss: () -> Unit) {
                             Icon(
                                 imageVector = Icons.Default.ContentCopy,
                                 contentDescription = "Copy",
-                                tint = PrimaryBlueDark,
+                                tint = PrimaryBlue,
                                 modifier = Modifier.size(16.dp)
                             )
                         }
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
                             text = websiteUrl,
-                            color = PrimaryBlueDark,
+                            color = PrimaryBlue,
                             fontSize = 12.sp,
-                            fontFamily = FontFamily.Monospace,
-                            fontWeight = FontWeight.Medium
+                            fontFamily = FontFamily.Monospace
                         )
                     }
                 }
 
                 Spacer(modifier = Modifier.height(10.dp))
 
-                // Github Repo Card (Clickable to copy)
+                // Module 3: Github Repo Card (Clickable to copy)
                 val githubUrl = "https://github.com/HurricaneDD/RTL_SDR_LBJ_RECEIVER_Android"
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(SurfaceSecondary)
+                        .background(SurfaceSecondary, RoundedCornerShape(10.dp))
                         .border(1.dp, BorderLight, RoundedCornerShape(10.dp))
                         .clickable { copyToClipboard(githubUrl, "Github仓库地址") }
                         .padding(12.dp)
@@ -849,7 +878,7 @@ fun AboutAppDialog(onDismiss: () -> Unit) {
                                 Icon(
                                     imageVector = Icons.Default.Code,
                                     contentDescription = null,
-                                    tint = TextPrimary,
+                                    tint = PrimaryBlue,
                                     modifier = Modifier.size(16.dp).padding(end = 4.dp)
                                 )
                                 Text(
@@ -877,15 +906,14 @@ fun AboutAppDialog(onDismiss: () -> Unit) {
                     }
                 }
 
-                Spacer(modifier = Modifier.height(12.dp))
+                Spacer(modifier = Modifier.height(10.dp))
 
-                // Acknowledgement Card (Clickable to copy ref link)
+                // Module 4: Acknowledgement Card (Clickable to copy ref link)
                 val refUrl = "https://github.com/Sdr-Is-Fun/RTL_SDR_LBJ_RECEIVER"
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(SurfaceSecondary)
+                        .background(SurfaceSecondary, RoundedCornerShape(10.dp))
                         .border(1.dp, BorderLight, RoundedCornerShape(10.dp))
                         .clickable { copyToClipboard(refUrl, "参考项目链接") }
                         .padding(12.dp)
@@ -918,4 +946,311 @@ fun AboutAppDialog(onDismiss: () -> Unit) {
         }
     )
 }
+
+@Composable
+fun TrainTypeRuleDialog(
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = SurfaceCard,
+        title = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    imageVector = Icons.Default.Train,
+                    contentDescription = null,
+                    tint = PrimaryBlue,
+                    modifier = Modifier.padding(end = 8.dp)
+                )
+                Text(
+                    text = "列车车次编排规定",
+                    color = PrimaryBlueDark,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 17.sp
+                )
+            }
+        },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
+            ) {
+                // Front Note Banner
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(Color(0xFFE8EEF5), RoundedCornerShape(8.dp))
+                        .border(1.dp, PrimaryBlue.copy(alpha = 0.35f), RoundedCornerShape(8.dp))
+                        .padding(horizontal = 10.dp, vertical = 8.dp)
+                ) {
+                    Text(
+                        text = "现行的车次编号规范来自于2014年颁布的铁总运[2014]308号文《列车车次编排规定》。",
+                        color = PrimaryBlueDark,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium,
+                        lineHeight = 17.sp
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                // Scrollable table preview
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(4.dp))
+                        .horizontalScroll(rememberScrollState())
+                ) {
+                    TrainRulesTableContent()
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = onDismiss,
+                colors = ButtonDefaults.buttonColors(containerColor = PrimaryBlue)
+            ) {
+                Text("关闭", color = Color.White, fontWeight = FontWeight.Bold)
+            }
+        }
+    )
+}
+
+@Composable
+fun TrainRulesTableContent() {
+    Column(
+        modifier = Modifier
+            .width(620.dp)
+            .background(Color.White)
+            .border(1.dp, Color(0xFF222222))
+    ) {
+        // Title Row
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 10.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = "列车车次编排规定",
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Bold,
+                color = Color.Black
+            )
+        }
+
+        // Header Row
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(Color(0xFFF2F2F2))
+                .border(1.dp, Color(0xFF222222))
+        ) {
+            RuleTableCell(text = "序号", width = 45.dp, isHeader = true)
+            RuleTableCell(text = "列车种类", width = 145.dp, isHeader = true)
+            RuleTableCell(text = "前缀", width = 65.dp, isHeader = true)
+            RuleTableCell(text = "车次范围", width = 175.dp, isHeader = true)
+            RuleTableCell(text = "备注", width = 190.dp, isHeader = true, isLast = true)
+        }
+
+        // Section 1: 一、旅客列车
+        RuleSectionHeader(title = "一、旅客列车")
+        RuleTableRow("1", "高速动车组旅客列车", "G\n读“高”", "G1—G9998", "直通  G1—G4998  (G4001—G4998为直通临客预留)\n管内  G5001—G9998 (G9001—G9998为管内临客预留)")
+        RuleTableRow("2", "城际动车组旅客列车", "C\n读“城”", "C1—C9998", "C9001—C9998为临客预留")
+        RuleTableRow("3", "动车组旅客列车", "D\n读“动”", "D1—D9998", "直通  D1—D4998  (D4001—D4998为直通临客预留)\n管内  D5001—D9998 (D9001—D9998为管内临客预留)")
+        RuleTableRow("4", "直达特快旅客列车", "Z\n读“直”", "Z1—Z9998", "160km/h\n直通  Z1—Z4998 (Z4001—Z4998为直通临客预留)\n管内  Z5001—Z9998 (Z9001—Z9998为管内临客预留)")
+        RuleTableRow("5", "特快旅客列车", "T\n读“特”", "T1—T9998", "140km/h\n直通  T1—T3998 (T3001—T3998为直通临客预留)\n管内  T4001—T9998 (T4001—T4998为管内临客预留)")
+        RuleTableRow("6", "快速旅客列车", "K\n读“快”", "K1—K9998", "120km/h\n直通  K1—K4998 (K4001—K4998为直通临客预留)\n管内  K5001—K9998 (K5001—K6998为管内临客预留)")
+        RuleTableRow("7", "普通旅客列车\n(普快/普慢)", "—", "1001—5998 (普快)\n6001—7598 (普慢)", "120km/h\n普快直通: 1001—3998 (3001—3998临客预留)\n普快管内: 4001—5998\n普慢直通: 6001—6198 / 管内: 6201—7598")
+        RuleTableRow("8", "通勤列车", "—", "7601—8998", "—")
+        RuleTableRow("9", "临时旅客列车", "L\n读“临”", "L1—L9998", "100km/h\n直通  L1—L6998\n管内  L7001—L9998")
+        RuleTableRow("10", "旅游列车", "Y\n读“游”", "Y1—Y998", "120km/h\n直通  Y1—Y498\n管内  Y501—Y998")
+
+        // Section 2: 二、特快货物班列
+        RuleSectionHeader(title = "二、特快货物班列")
+        RuleTableRow("—", "特快货物班列", "X\n读“行”", "X1—X198", "160km/h")
+
+        // Section 3: 三、货物列车
+        RuleSectionHeader(title = "三、货物列车")
+        RuleTableRow("1", "快运货物列车\n• 快速货物班列\n• 货物快运列车\n• 中欧中亚铁水班列\n• 普快货物班列", "X\n读“行”", "X201—X398\nX401—X998 (管内)\nX2401—X2998 (直通)\nX8001—X9998\n80001—81998", "120km/h (快速货物班列)\n120km/h (直通/管内快运)\n中欧中亚: X8001—X8998 (120km/h)\n中亚/水铁: X9001—X9998 (普货标尺)\n普快货物班列: 80001—81998 (普货标尺)")
+        RuleTableRow("2", "煤炭直达列车", "—", "82001—84998", "—")
+        RuleTableRow("3", "石油直达列车", "—", "85001—85998", "—")
+        RuleTableRow("4", "始发直达列车", "—", "86001—86998", "—")
+        RuleTableRow("5", "空车直达列车", "—", "87001—87998", "—")
+        RuleTableRow("6", "技术直达列车", "—", "10001—19998", "—")
+        RuleTableRow("7", "直通货物列车", "—", "20001—29998", "—")
+        RuleTableRow("8", "区段货物列车", "—", "30001—39998", "—")
+        RuleTableRow("9", "摘挂列车", "—", "40001—44998", "—")
+        RuleTableRow("10", "小运转列车", "—", "45001—49998", "—")
+        RuleTableRow("11", "重载货物列车", "—", "71001—77998", "根据实际运输组织模式，由铁路局制定具体车次分段")
+        RuleTableRow("12", "自备车列车", "—", "60001—69998", "—")
+        RuleTableRow("13", "超限货物列车", "—", "70001—70998", "—")
+        RuleTableRow("14", "保温列车", "—", "78001—78998", "—")
+
+        // Section 4: 五、单机和路用列车
+        RuleSectionHeader(title = "五、单机和路用列车")
+        RuleTableRow("1", "单机 (客/货/小运转)", "—", "50001—50998 (客车)\n51001—51998 (货车)\n52001—52998 (小运转)", "—")
+        RuleTableRow("2", "补机", "—", "53001—54998", "—")
+        RuleTableRow("3", "动车组检测/确认列车", "DJ\n读“动检”", "DJ1—DJ1998 (检测)\nDJ5001—DJ8998 (确认)", "300km/h检测: 直通DJ1-400, 管内DJ401-998\n250km/h检测: 直通DJ1001-1400, 管内DJ1401-1998\n确认列车: 直通DJ5001-6998, 管内DJ7001-8998")
+        RuleTableRow("4", "试运转列车", "—", "55001—55300 (普客货)\n55301—55500 (300km/h)\n55501—55998 (250km/h)", "—")
+        RuleTableRow("5", "轻油动车、轨道车", "—", "56001—56998", "—")
+        RuleTableRow("6", "路用列车", "—", "57001—57998", "—")
+        RuleTableRow("7", "救援列车", "—", "58101—58998", "—")
+        RuleTableRow("8", "回送客车底列车", "00 / 0 / F", "001—00100 (动车有火)\n00101—00298 (动车无火)\n00301—00498 (普客无火)\n0+图定车次 (图定回送)\nF+原车次 (折返)", "“00”均为数字\n“00”均为数字\n“00”均为数字\n“0”为数字\n“F”读“返”")
+    }
+}
+
+@Composable
+private fun RuleSectionHeader(title: String) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(Color(0xFFE8EEF5))
+            .border(0.5.dp, Color(0xFF222222))
+            .padding(vertical = 4.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            text = title,
+            fontWeight = FontWeight.Bold,
+            fontSize = 12.sp,
+            color = Color.Black
+        )
+    }
+}
+
+@Composable
+private fun RuleTableRow(
+    id: String,
+    type: String,
+    prefix: String,
+    range: String,
+    remark: String
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .border(0.5.dp, Color(0xFF222222))
+    ) {
+        RuleTableCell(text = id, width = 45.dp, alignCenter = true)
+        RuleTableCell(text = type, width = 145.dp)
+        RuleTableCell(text = prefix, width = 65.dp, alignCenter = true)
+        RuleTableCell(text = range, width = 175.dp)
+        RuleTableCell(text = remark, width = 190.dp, isLast = true)
+    }
+}
+
+@Composable
+private fun RuleTableCell(
+    text: String,
+    width: androidx.compose.ui.unit.Dp,
+    isHeader: Boolean = false,
+    alignCenter: Boolean = false,
+    isLast: Boolean = false
+) {
+    Box(
+        modifier = Modifier
+            .width(width)
+            .padding(horizontal = 4.dp, vertical = 5.dp),
+        contentAlignment = if (isHeader || alignCenter) Alignment.Center else Alignment.CenterStart
+    ) {
+        Text(
+            text = text,
+            fontSize = if (isHeader) 11.5.sp else 10.5.sp,
+            fontWeight = if (isHeader) FontWeight.Bold else FontWeight.Normal,
+            color = Color.Black,
+            lineHeight = 14.5.sp,
+            textAlign = if (alignCenter || isHeader) androidx.compose.ui.text.style.TextAlign.Center else androidx.compose.ui.text.style.TextAlign.Start
+        )
+    }
+}
+
+@Composable
+fun TtsEngineSelectionDialog(
+    currentMode: String,
+    onSelectMode: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val options = listOf(
+        Triple("auto", "自动选择 (推荐)", "优先检测系统中文 TTS 语音引擎；若系统无合适中文语音或播报失败，自动切换至备选在线云端 TTS 服务。"),
+        Triple("system", "系统 TTS 引擎", "强制使用本地系统内置语音合成引擎（如系统自带可用的中文TTS）。"),
+        Triple("online", "在线TTS API (仅联网)", "强制使用在线网络语音合成 API 服务；在联网播报后自动下载保存至本地离线缓存，以便下次使用。")
+    )
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = SurfaceCard,
+        title = {
+            Text(
+                text = "选择语音合成引擎",
+                color = PrimaryBlueDark,
+                fontSize = 17.sp,
+                fontWeight = FontWeight.Bold
+            )
+        },
+        text = {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                options.forEach { (modeKey, title, desc) ->
+                    val isSelected = (currentMode == modeKey)
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(if (isSelected) PrimaryBlueDark.copy(alpha = 0.08f) else Color.Transparent)
+                            .border(
+                                width = 1.dp,
+                                color = if (isSelected) PrimaryBlueDark else BorderLight,
+                                shape = RoundedCornerShape(8.dp)
+                            )
+                            .clickable {
+                                onSelectMode(modeKey)
+                                onDismiss()
+                            }
+                            .padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        RadioButton(
+                            selected = isSelected,
+                            onClick = {
+                                onSelectMode(modeKey)
+                                onDismiss()
+                            },
+                            colors = RadioButtonDefaults.colors(
+                                selectedColor = PrimaryBlueDark,
+                                unselectedColor = TextMuted
+                            )
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = title,
+                                fontSize = 14.sp,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                color = if (isSelected) PrimaryBlueDark else TextPrimary
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = desc,
+                                fontSize = 11.5.sp,
+                                color = TextMuted,
+                                lineHeight = 15.sp
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("关闭", color = PrimaryBlueDark, fontWeight = FontWeight.Bold)
+            }
+        }
+    )
+}
+
+
 

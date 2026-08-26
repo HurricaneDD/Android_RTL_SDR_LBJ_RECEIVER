@@ -58,25 +58,36 @@ class SignalSimulator(
         val startKm: Double
     )
 
+    private var phaseAcc: Int = 0
+    private var cachedBitStream: IntArray = IntArray(0)
+    private var cachedScenarioIndex: Int = -1
+    private var cachedBurstId: Int = -1
+
+    private val step1: Int = (((carrierFreqHz + fskDeviationHz) / sampleRate) * 4294967296.0).toInt()
+    private val step0: Int = (((carrierFreqHz - fskDeviationHz) / sampleRate) * 4294967296.0).toInt()
+    private val samplesPerBit: Int = sampleRate / DspConstants.BAUD_RATE // 800 samples per bit
+
     fun resetSimulation() {
         simTime = 0.0
-        lastBurstTime = -5.0
-        phase = 0.0
+        lastBurstTime = -15.0
+        phaseAcc = 0
         currentTrainIndex = -1
         trainKm = demoTrains[0].startKm
+        cachedScenarioIndex = -1
+        cachedBurstId = -1
     }
 
     fun generateBlock(): ComplexBuffer {
         val buffer = reusableBuffer
         val now = simTime
-        val timeStep = sampleDuration
 
-        // Trigger a new train packet burst strictly every 5.0 seconds
-        if (now - lastBurstTime >= 5.0) {
+        // Trigger a new train packet burst cycle strictly every 15.0 seconds
+        if (now - lastBurstTime >= 15.0) {
             lastBurstTime = now
             currentTrainIndex = (currentTrainIndex + 1) % demoTrains.size
             val scenario = demoTrains[currentTrainIndex]
             trainKm = scenario.startKm
+            cachedScenarioIndex = -1
         }
 
         val activeScenario = if (currentTrainIndex >= 0) demoTrains[currentTrainIndex] else demoTrains[0]
@@ -84,43 +95,60 @@ class SignalSimulator(
         // Fast zero-allocation noise copy
         var nIdx = noiseIdx
         val nMask = noiseTableSize - 1
-        for (i in 0 until blockSize) {
-            buffer.real[i] = noiseTableReal[nIdx]
-            buffer.imag[i] = noiseTableImag[nIdx]
+        val real = buffer.real
+        val imag = buffer.imag
+        val nReal = noiseTableReal
+        val nImag = noiseTableImag
+        val bSize = blockSize
+
+        for (i in 0 until bSize) {
+            real[i] = nReal[nIdx]
+            imag[i] = nImag[nIdx]
             nIdx = (nIdx + 1) and nMask
         }
         noiseIdx = nIdx
 
         val burstElapsed = now - lastBurstTime
-        if (burstElapsed in 0.0..1.6) {
-            val bitStream = generateLbjBitstream(activeScenario, trainKm)
-            val baudPeriod = 1.0 / DspConstants.BAUD_RATE
-            val signalAmp = 0.65f
+        val inBurst1 = burstElapsed in 0.0..1.6
+        val inBurst2 = burstElapsed in 3.0..4.6
 
-            var ph = phase
-            val twoPi = 2.0 * PI
-            val radToTable = (trigTableSize / twoPi)
-
-            for (i in 0 until blockSize) {
-                val tInBurst = burstElapsed + i * timeStep
-                val bitIdx = (tInBurst / baudPeriod).toInt()
-                val bit = if (bitIdx in bitStream.indices) bitStream[bitIdx] else 0
-
-                val fOffset = carrierFreqHz + (if (bit == 1) fskDeviationHz else -fskDeviationHz)
-                val dPhase = 2.0 * PI * fOffset * timeStep
-
-                ph += dPhase
-                if (ph >= twoPi) ph -= twoPi
-                else if (ph < 0.0) ph += twoPi
-
-                val tableIdx = ((ph * radToTable).toInt()) and trigMask
-                buffer.real[i] += signalAmp * cosLookup[tableIdx]
-                buffer.imag[i] += signalAmp * sinLookup[tableIdx]
+        if (inBurst1 || inBurst2) {
+            val burstId = if (inBurst1) 1 else 2
+            if (cachedScenarioIndex != currentTrainIndex || cachedBurstId != burstId) {
+                cachedScenarioIndex = currentTrainIndex
+                cachedBurstId = burstId
+                val currentKm = if (inBurst1) trainKm else (trainKm + (if (activeScenario.dir == "下行") 0.25 else -0.25))
+                cachedBitStream = generateLbjBitstream(activeScenario, currentKm)
             }
-            phase = ph
+
+            val tInCurrentBurst = if (inBurst1) burstElapsed else (burstElapsed - 3.0)
+            val bitStream = cachedBitStream
+            val numBits = bitStream.size
+            val spb = samplesPerBit
+            val sAmp = 0.65f
+
+            var startSampleIdx = (tInCurrentBurst * sampleRate).toInt()
+            var ph = phaseAcc
+            val s1 = step1
+            val s0 = step0
+            val sLookup = sinLookup
+            val cLookup = cosLookup
+            val tMask = trigMask
+
+            for (i in 0 until bSize) {
+                val curSample = startSampleIdx + i
+                val bitIdx = curSample / spb
+                val bit = if (bitIdx in 0 until numBits) bitStream[bitIdx] else 0
+
+                ph += if (bit == 1) s1 else s0
+                val idx = (ph ushr 20) and tMask
+                real[i] += sAmp * cLookup[idx]
+                imag[i] += sAmp * sLookup[idx]
+            }
+            phaseAcc = ph
         }
 
-        simTime += blockSize * timeStep
+        simTime += bSize * sampleDuration
         return buffer
     }
 

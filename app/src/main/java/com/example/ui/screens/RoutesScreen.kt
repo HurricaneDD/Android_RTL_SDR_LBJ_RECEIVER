@@ -38,6 +38,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.RouteStationKmEntity
+import com.example.decoder.ArrivalEstimator
 import com.example.ui.theme.BorderLight
 import com.example.ui.theme.EmeraldGreen
 import com.example.ui.theme.PrimaryBlue
@@ -54,7 +55,7 @@ import java.util.Locale
 @Composable
 fun RoutesScreen(
     savedRoutes: List<RouteStationKmEntity>,
-    onAddOrEditRoute: (String, Double?) -> Unit,
+    onAddOrEditRoute: (String, Double?, String) -> Unit,
     onDeleteRoute: (String) -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -84,7 +85,7 @@ fun RoutesScreen(
             }
 
             Button(
-                onClick = { onAddOrEditRoute("", null) },
+                onClick = { onAddOrEditRoute("", null, "") },
                 colors = ButtonDefaults.buttonColors(containerColor = PrimaryBlue),
                 shape = RoundedCornerShape(8.dp),
                 modifier = Modifier.testTag("add_route_km_button")
@@ -176,6 +177,13 @@ fun RoutesScreen(
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 items(savedRoutes, key = { it.routeName }) { routeItem ->
+                    val mainTitle = routeItem.nickname.ifBlank { routeItem.routeName }
+                    val kmValueStr = String.format(Locale.US, "%.3f", routeItem.stationKm).trimEnd('0').let {
+                        if (it.endsWith('.')) it + "0" else it
+                    }
+                    val milestoneStr = ArrivalEstimator.formatMilestone(routeItem.stationKm)
+                    val subTitle = "${routeItem.routeName}${milestoneStr}（${kmValueStr}KM）"
+
                     Card(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -191,22 +199,24 @@ fun RoutesScreen(
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    text = routeItem.routeName,
+                                    text = mainTitle,
                                     color = EmeraldGreen,
                                     fontSize = 16.sp,
                                     fontWeight = FontWeight.Bold
                                 )
-                                Spacer(modifier = Modifier.height(2.dp))
+                                Spacer(modifier = Modifier.height(4.dp))
                                 Text(
-                                    text = String.format(Locale.US, "本站位置: %06.1f KM", routeItem.stationKm),
+                                    text = subTitle,
                                     color = TextPrimary,
-                                    fontSize = 14.sp,
+                                    fontSize = 13.sp,
                                     fontFamily = FontFamily.Monospace,
-                                    fontWeight = FontWeight.SemiBold
+                                    fontWeight = FontWeight.Medium
                                 )
                             }
 
-                            IconButton(onClick = { onAddOrEditRoute(routeItem.routeName, routeItem.stationKm) }) {
+                            IconButton(onClick = {
+                                onAddOrEditRoute(routeItem.routeName, routeItem.stationKm, routeItem.nickname)
+                            }) {
                                 Icon(
                                     imageVector = Icons.Default.Edit,
                                     contentDescription = "Edit",

@@ -57,8 +57,7 @@ class LbjDecoder(
     }
 
     fun processAudioChunk(audioChunk: FloatArray) {
-        val bits = bitSlicer.process(audioChunk)
-        for (bit in bits) {
+        bitSlicer.process(audioChunk) { bit ->
             processBit(bit)
         }
     }

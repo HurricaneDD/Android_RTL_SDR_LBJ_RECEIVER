@@ -44,11 +44,11 @@ class BitSlicer(
     }
 
     /**
-     * Process an audio chunk (pcmFloat) and return extracted bits (0 or 1).
+     * Process an audio chunk (pcmFloat) and invoke callback for each recovered bit (0 or 1) with zero allocations.
      */
-    fun process(audioChunk: FloatArray): IntArray {
+    fun process(audioChunk: FloatArray, onBit: (Int) -> Unit) {
         val n = audioChunk.size
-        if (n == 0) return IntArray(0)
+        if (n == 0) return
 
         if (bbBuf.size < n) {
             bbBuf = FloatArray(n)
@@ -58,25 +58,22 @@ class BitSlicer(
         // 1. Direct Form II transposed FIR smoothing (Gaussian)
         val nz = nt - 1
         val b0 = bSmooth[0]
+        val bArr = bSmooth
+        val zi = ziSmooth
+
         for (i in 0 until n) {
             val xi = audioChunk[i]
-            val yi = if (nz > 0) b0 * xi + ziSmooth[0] else b0 * xi
+            val yi = if (nz > 0) b0 * xi + zi[0] else b0 * xi
             for (j in 0 until nz - 1) {
-                ziSmooth[j] = bSmooth[j + 1] * xi + ziSmooth[j + 1]
+                zi[j] = bArr[j + 1] * xi + zi[j + 1]
             }
             if (nz > 0) {
-                ziSmooth[nz - 1] = bSmooth[nz] * xi
+                zi[nz - 1] = bArr[nz] * xi
             }
             bb[i] = yi
         }
 
         // 2. DPLL Bit slicing (_d8)
-        if (bitBuffer.size < n * 2) {
-            bitBuffer = IntArray(n * 2)
-        }
-        val outBits = bitBuffer
-        var bitCount = 0
-
         var ph = ncoPhase
         var pllInt = pllIntegrator
         var mx = peakMax
@@ -125,7 +122,7 @@ class BitSlicer(
 
             if (ph > 0.5) {
                 if (lc == 0) {
-                    outBits[bitCount++] = 1 - hb
+                    onBit(1 - hb)
                 }
                 lc = 1
             } else {
@@ -143,7 +140,22 @@ class BitSlicer(
         peakMin = mn
         lastHardBit = lh
         lastBitClk = lc
+    }
 
-        return outBits.copyOf(bitCount)
+    /**
+     * Legacy helper returning IntArray.
+     */
+    fun process(audioChunk: FloatArray): IntArray {
+        var count = 0
+        if (bitBuffer.size < audioChunk.size) {
+            bitBuffer = IntArray(audioChunk.size * 2)
+        }
+        val out = bitBuffer
+        process(audioChunk) { bit ->
+            if (count < out.size) {
+                out[count++] = bit
+            }
+        }
+        return out.copyOf(count)
     }
 }

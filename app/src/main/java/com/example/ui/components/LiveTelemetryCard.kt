@@ -15,9 +15,11 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AltRoute
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Navigation
 import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.Timer
@@ -64,8 +66,9 @@ import java.util.Locale
 fun LiveTelemetryCard(
     telemetry: TrainTelemetry,
     etaInfo: EtaInfo,
-    warningMessage: String,
+    warningMessage: String = "",
     currentStationKmText: String,
+    onOpenTrainTypeRuleDialog: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val isHit = telemetry.isHit
@@ -88,36 +91,6 @@ fun LiveTelemetryCard(
                 .fillMaxWidth()
                 .padding(16.dp)
         ) {
-            // Warning Banner if present
-            AnimatedVisibility(
-                visible = warningMessage.isNotEmpty(),
-                enter = fadeIn(),
-                exit = fadeOut()
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(bottom = 12.dp)
-                        .background(RedSoft, RoundedCornerShape(8.dp))
-                        .border(1.dp, RedAlert.copy(alpha = 0.3f), RoundedCornerShape(8.dp))
-                        .padding(horizontal = 12.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Warning,
-                        contentDescription = "Warning",
-                        tint = RedAlert,
-                        modifier = Modifier.padding(end = 8.dp)
-                    )
-                    Text(
-                        text = warningMessage,
-                        color = RedAlert,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Medium
-                    )
-                }
-            }
-
             // Top Row: [Train Number + Category Tag] (Left) + [Direction Badge & Watchlist Badge] (Right)
             val (dirBg, dirFg) = when (telemetry.direction) {
                 "下行" -> Pair(EmeraldSoft, EmeraldGreen)
@@ -132,12 +105,42 @@ fun LiveTelemetryCard(
             ) {
                 // Left Column: Train Number & Category
                 Column {
-                    Text(
-                        text = "列车车次 (Train No.)",
-                        color = TextMuted,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Medium
-                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "列车车次 (Train No.)",
+                            color = TextMuted,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                        if (onOpenTrainTypeRuleDialog != null) {
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Box(
+                                modifier = Modifier
+                                    .background(PrimaryBlueSoft, RoundedCornerShape(4.dp))
+                                    .clickable { onOpenTrainTypeRuleDialog() }
+                                    .padding(horizontal = 6.dp, vertical = 2.dp)
+                                    .testTag("train_type_rule_button")
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(
+                                        imageVector = Icons.Default.Info,
+                                        contentDescription = "车次编排规定",
+                                        tint = PrimaryBlueDark,
+                                        modifier = Modifier.size(11.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(2.dp))
+                                    Text(
+                                        text = "车次编排规定",
+                                        color = PrimaryBlueDark,
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                }
+                            }
+                        }
+                    }
                     Spacer(modifier = Modifier.height(2.dp))
                     Text(
                         text = telemetry.trainNo,
