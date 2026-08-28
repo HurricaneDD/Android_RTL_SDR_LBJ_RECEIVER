@@ -25,7 +25,22 @@ class LbjPreferences(context: Context) {
         private const val KEY_TTS_ENGINE_MODE = "pref_tts_engine_mode"
         private const val KEY_ENABLE_EXTERNAL_AUTOMATION = "pref_enable_external_automation"
         private const val KEY_ALERT_NOTIFICATION = "pref_alert_notification_enabled"
+        private const val KEY_THEME_MODE = "pref_theme_mode"
+        private const val KEY_BASEBAND_AUDIO_ENABLED = "pref_baseband_audio_enabled"
+        private const val KEY_BASEBAND_AUDIO_VOLUME = "pref_baseband_audio_volume"
     }
+
+    var basebandAudioVolume: Int
+        get() = prefs.getInt(KEY_BASEBAND_AUDIO_VOLUME, 50).coerceIn(0, 100)
+        set(value) = prefs.edit().putInt(KEY_BASEBAND_AUDIO_VOLUME, value.coerceIn(0, 100)).apply()
+
+    var basebandAudioEnabled: Boolean
+        get() = prefs.getBoolean(KEY_BASEBAND_AUDIO_ENABLED, false)
+        set(value) = prefs.edit().putBoolean(KEY_BASEBAND_AUDIO_ENABLED, value).apply()
+
+    var themeMode: String
+        get() = prefs.getString(KEY_THEME_MODE, "system") ?: "system"
+        set(value) = prefs.edit().putString(KEY_THEME_MODE, value).apply()
 
     var alertNotificationEnabled: Boolean
         get() = prefs.getBoolean(KEY_ALERT_NOTIFICATION, false)

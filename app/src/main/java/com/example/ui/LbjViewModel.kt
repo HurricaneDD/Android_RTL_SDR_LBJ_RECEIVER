@@ -20,6 +20,7 @@ import com.example.dsp.DspFrontend
 import com.example.dsp.FftProcessor
 import com.example.dsp.RssiGate
 import com.example.service.LbjKeepAliveService
+import com.example.util.BasebandAudioPlayer
 import com.example.util.LbjPreferences
 import com.example.util.SoundAlertManager
 import kotlinx.coroutines.Dispatchers
@@ -66,6 +67,9 @@ data class ReceiverState(
     val showSimulationButton: Boolean = false,
     val ttsEngineMode: String = "auto",
     val enableExternalAutomation: Boolean = false,
+    val themeMode: String = "system",
+    val basebandAudioEnabled: Boolean = false,
+    val basebandAudioVolume: Int = 50,
     val ttsCacheCount: Int = 0,
     val ttsCacheBytes: Long = 0L,
     val showSignalLossDialog: Boolean = false,
@@ -105,7 +109,10 @@ class LbjViewModel(application: Application) : AndroidViewModel(application) {
             keepAliveEnabled = prefs.keepAliveEnabled,
             showSimulationButton = prefs.showSimulationButton,
             ttsEngineMode = prefs.ttsEngineMode,
-            enableExternalAutomation = prefs.enableExternalAutomation
+            enableExternalAutomation = prefs.enableExternalAutomation,
+            themeMode = prefs.themeMode,
+            basebandAudioEnabled = prefs.basebandAudioEnabled,
+            basebandAudioVolume = prefs.basebandAudioVolume
         )
     )
     val receiverState: StateFlow<ReceiverState> = _receiverState.asStateFlow()
@@ -120,6 +127,9 @@ class LbjViewModel(application: Application) : AndroidViewModel(application) {
     private val rssiGate = RssiGate(onDb = prefs.csThresholdDb)
     private val fftProcessor = FftProcessor()
     private val simulator = SignalSimulator()
+    private val basebandAudioPlayer = BasebandAudioPlayer().apply {
+        setVolume(prefs.basebandAudioVolume)
+    }
 
     private var dspFrontend = DspFrontend(
         sampleRate = DspConstants.RTL_SAMPLE_RATE.toDouble(),
@@ -335,6 +345,10 @@ class LbjViewModel(application: Application) : AndroidViewModel(application) {
             rtlClient.open()
         }
 
+        if (_receiverState.value.basebandAudioEnabled) {
+            basebandAudioPlayer.start()
+        }
+
         if (_receiverState.value.keepAliveEnabled) {
             LbjKeepAliveService.start(
                 getApplication(),
@@ -394,6 +408,7 @@ class LbjViewModel(application: Application) : AndroidViewModel(application) {
         fftJob?.cancel()
         fftJob = null
         rtlClient.close()
+        basebandAudioPlayer.stop()
 
         // Finalize active train session in DB
         finalizeActiveTrainSession()
@@ -443,6 +458,7 @@ class LbjViewModel(application: Application) : AndroidViewModel(application) {
     private suspend fun runDspLoop(isSimulation: Boolean) {
         val resetAfcOnRelease = true
         var lastUiUpdateTime = 0L
+        var lastFftTriggerTime = 0L
         var nextSimTime = System.currentTimeMillis()
         var lastFpsCalcTime = System.currentTimeMillis()
         var frameCountInSec = 0
@@ -506,11 +522,14 @@ class LbjViewModel(application: Application) : AndroidViewModel(application) {
                 _receiverState.value = _receiverState.value.copy(warningMessage = "")
             }
 
-            // 1. Offload FFT & spectrum processing to dedicated background thread pool
-            val fftN = minOf(512, iq.size)
-            System.arraycopy(iq.real, 0, fftBuffer.real, 0, fftN)
-            System.arraycopy(iq.imag, 0, fftBuffer.imag, 0, fftN)
-            fftChannel.trySend(Unit)
+            // 1. Offload FFT & spectrum processing to dedicated background thread pool (throttled ~10 Hz to prevent CPU starvation on low-end CPUs)
+            if (nowMs - lastFftTriggerTime >= 100L) {
+                lastFftTriggerTime = nowMs
+                val fftN = minOf(512, iq.size)
+                System.arraycopy(iq.real, 0, fftBuffer.real, 0, fftN)
+                System.arraycopy(iq.imag, 0, fftBuffer.imag, 0, fftN)
+                fftChannel.trySend(Unit)
+            }
 
             // Detect peak freeze in real SDR reception mode (3 seconds with no change)
             if (!isSimulation) {
@@ -531,6 +550,11 @@ class LbjViewModel(application: Application) : AndroidViewModel(application) {
 
             // 2. Process DSP frontend chain (DDC, Halfband, FIR Decimation, FM Demod)
             val dspRes = dspFrontend.process(iq, rssiGate)
+
+            // Stream baseband audio (analog radio static / demodulated audio) to speaker if enabled
+            if (_receiverState.value.basebandAudioEnabled) {
+                basebandAudioPlayer.writeSamples(dspRes.pcmFloat)
+            }
 
             // 3. Check AFC update
             if (dspFrontend.consumeAfcUpdated()) {
@@ -558,9 +582,9 @@ class LbjViewModel(application: Application) : AndroidViewModel(application) {
                 lastFpsCalcTime = nowMs
             }
 
-            // Update UI state with 50ms throttle for responsive demodulation metrics
+            // Update UI state with 100ms throttle for responsive demodulation metrics without overwhelming Compose on older Android versions
             val stateChanged = rssiGate.justActivated || rssiGate.justDeactivated
-            if (stateChanged || nowMs - lastUiUpdateTime >= 50L) {
+            if (stateChanged || nowMs - lastUiUpdateTime >= 100L) {
                 lastUiUpdateTime = nowMs
                 val curRoute = _liveTelemetry.value.route
                 val routeKm = arrivalEstimator.getKmForRoute(curRoute)
@@ -678,6 +702,30 @@ class LbjViewModel(application: Application) : AndroidViewModel(application) {
         _receiverState.value = _receiverState.value.copy(enableExternalAutomation = enabled)
     }
 
+    fun setThemeMode(mode: String) {
+        prefs.themeMode = mode
+        _receiverState.value = _receiverState.value.copy(themeMode = mode)
+    }
+
+    fun setBasebandAudioEnabled(enabled: Boolean) {
+        prefs.basebandAudioEnabled = enabled
+        _receiverState.value = _receiverState.value.copy(basebandAudioEnabled = enabled)
+        if (enabled) {
+            if (_receiverState.value.isRunning) {
+                basebandAudioPlayer.start()
+            }
+        } else {
+            basebandAudioPlayer.stop()
+        }
+    }
+
+    fun setBasebandAudioVolume(volume: Int) {
+        val clamped = volume.coerceIn(0, 100)
+        prefs.basebandAudioVolume = clamped
+        _receiverState.value = _receiverState.value.copy(basebandAudioVolume = clamped)
+        basebandAudioPlayer.setVolume(clamped)
+    }
+
     fun refreshTtsCacheInfo() {
         val (count, bytes) = soundAlertManager.getTtsCacheInfo()
         _receiverState.value = _receiverState.value.copy(
@@ -709,6 +757,9 @@ class LbjViewModel(application: Application) : AndroidViewModel(application) {
         setShowSimulationButton(false)
         setTtsEngineMode("auto")
         setEnableExternalAutomation(false)
+        setThemeMode("light")
+        setBasebandAudioEnabled(false)
+        setBasebandAudioVolume(50)
     }
 
     fun setRouteStationKm(routeName: String, stationKm: Double, nickname: String = "") {

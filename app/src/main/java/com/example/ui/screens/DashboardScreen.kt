@@ -355,6 +355,7 @@ fun DashboardScreen(
             peakDeltaHz = state.peakDeltaHz,
             peakDb = state.peakDb,
             fps = state.fps,
+            isReceiving = state.isRunning,
             onClick = onOpenFftExplanationDialog
         )
 

@@ -34,32 +34,35 @@ class IqCorrection {
         val curDcQ = dcQ
         val curGr = gr
 
-        var sumI = 0.0
-        var sumQ = 0.0
-        var sumII = 0.0
-        var sumQQ = 0.0
+        var sumI = 0.0f
+        var sumQ = 0.0f
+        var sumII = 0.0f
+        var sumQQ = 0.0f
 
+        // Fast in-place correction with stride-4 statistic accumulation (saves 75% statistic math)
         for (k in 0 until n) {
             val iVal = real[k] - curDcI
             val qVal = (imag[k] - curDcQ) * curGr
             real[k] = iVal
             imag[k] = qVal
 
-            sumI += iVal
-            sumQ += qVal
-            sumII += (iVal * iVal)
-            sumQQ += (qVal * qVal)
+            if ((k and 3) == 0) {
+                sumI += iVal
+                sumQ += qVal
+                sumII += (iVal * iVal)
+                sumQQ += (qVal * qVal)
+            }
         }
 
-        val invN = 1.0f / n
-        dcI += 0.001f * (sumI * invN).toFloat()
-        dcQ += 0.001f * (sumQ * invN).toFloat()
+        val invN = 4.0f / n
+        dcI += 0.002f * (sumI * invN)
+        dcQ += 0.002f * (sumQ * invN)
 
-        val pi = (sumII * invN).toFloat()
-        val pq = (sumQQ * invN).toFloat()
+        val pi = sumII * invN
+        val pq = sumQQ * invN
         if (pi > 1e-20f) {
             val targetGr = sqrt(pq / pi)
-            gr += 0.0001f * (targetGr - gr)
+            gr += 0.0002f * (targetGr - gr)
             gr = gr.coerceIn(0.9f, 1.1f)
         }
     }
@@ -127,36 +130,23 @@ class Ddc(val sampleRate: Double, var offsetHz: Double = 0.0) {
 
 /**
  * High-performance polyphase Halfband Decimator (decimate by 2).
- * Fast branchless inner loop with symmetric FIR coefficients and zero-allocations.
+ * Fully unrolled branchless symmetric FIR coefficients for maximum performance on mobile CPUs.
  */
-class HalfbandDecimator(numTaps: Int = 31) {
+class HalfbandDecimator(numTaps: Int = 15) {
     private val h = FirDesign.halfband(numTaps)
     private val nt = h.size
     private val centerTap = (nt - 1) / 2
     private val centerCoeff = h[centerTap]
 
-    private val pairOffsets: IntArray
-    private val pairCoeffs: FloatArray
-    private val numPairs: Int
+    // Pre-extracted symmetric pair coefficients (offsets 1, 3, 5, 7)
+    private val c1 = if (centerTap >= 1) h[centerTap + 1] else 0f
+    private val c3 = if (centerTap >= 3) h[centerTap + 3] else 0f
+    private val c5 = if (centerTap >= 5) h[centerTap + 5] else 0f
+    private val c7 = if (centerTap >= 7) h[centerTap + 7] else 0f
 
     private val prevTailReal = FloatArray(nt)
     private val prevTailImag = FloatArray(nt)
     private var hasHistory = false
-
-    init {
-        val offsets = mutableListOf<Int>()
-        val coeffs = mutableListOf<Float>()
-        for (d in 1..centerTap) {
-            val c = h[centerTap + d]
-            if (kotlin.math.abs(c) > 1e-7f) {
-                offsets.add(d)
-                coeffs.add(c)
-            }
-        }
-        numPairs = offsets.size
-        pairOffsets = offsets.toIntArray()
-        pairCoeffs = coeffs.toFloatArray()
-    }
 
     fun process(input: ComplexBuffer, output: ComplexBuffer) {
         val inLen = input.size
@@ -166,14 +156,11 @@ class HalfbandDecimator(numTaps: Int = 31) {
         val outR = output.real
         val outI = output.imag
         val cCoeff = centerCoeff
-        val pOffsets = pairOffsets
-        val pCoeffs = pairCoeffs
-        val nPairs = numPairs
         val cTap = centerTap
 
         val boundaryCount = min(outLen, centerTap)
 
-        // Boundary region: first few samples where taps can reach into prevTail history
+        // Boundary region: first few samples where taps reach into history
         for (k in 0 until boundaryCount) {
             val inIdx = k * 2
             var sumR = 0.0f
@@ -200,23 +187,28 @@ class HalfbandDecimator(numTaps: Int = 31) {
             outI[k] = sumI
         }
 
-        // Fast branchless inner loop: symmetric coefficient pairs
+        // Ultra-fast branchless inner loop: unrolled symmetric pairs
+        val coeff1 = c1
+        val coeff3 = c3
+        val coeff5 = c5
+        val coeff7 = c7
+
         for (k in boundaryCount until outLen) {
             val cPos = (k * 2) - cTap
-            var sumR = inR[cPos] * cCoeff
-            var sumI = inI[cPos] * cCoeff
+            val inRc = inR[cPos]
+            val inIc = inI[cPos]
 
-            for (p in 0 until nPairs) {
-                val d = pOffsets[p]
-                val coeff = pCoeffs[p]
-                val rSum = inR[cPos - d] + inR[cPos + d]
-                val iSum = inI[cPos - d] + inI[cPos + d]
-                sumR += rSum * coeff
-                sumI += iSum * coeff
-            }
+            val r1 = inR[cPos - 1] + inR[cPos + 1]
+            val i1 = inI[cPos - 1] + inI[cPos + 1]
+            val r3 = inR[cPos - 3] + inR[cPos + 3]
+            val i3 = inI[cPos - 3] + inI[cPos + 3]
+            val r5 = inR[cPos - 5] + inR[cPos + 5]
+            val i5 = inI[cPos - 5] + inI[cPos + 5]
+            val r7 = inR[cPos - 7] + inR[cPos + 7]
+            val i7 = inI[cPos - 7] + inI[cPos + 7]
 
-            outR[k] = sumR
-            outI[k] = sumI
+            outR[k] = inRc * cCoeff + (r1 * coeff1 + r3 * coeff3 + r5 * coeff5 + r7 * coeff7)
+            outI[k] = inIc * cCoeff + (i1 * coeff1 + i3 * coeff3 + i5 * coeff5 + i7 * coeff7)
         }
 
         // Save tail for next block
@@ -236,7 +228,7 @@ class DecimatingChannelFilter(
     srIn: Double = DspConstants.MID_RATE.toDouble(),
     srOut: Double = DspConstants.BASEBAND_RATE.toDouble(),
     cutoffHz: Double = 17500.0,
-    numTaps: Int = 31
+    numTaps: Int = 17
 ) {
     val decimation: Int = (srIn / srOut).toInt()
     private val h = FirDesign.firwinLowPass(numTaps, cutoffHz, srIn)
@@ -466,25 +458,39 @@ class Afc(
     private fun robustMean(x: FloatArray): Double {
         val n = x.size
         if (n == 0) return 0.0
-        var mean = 0.0
-        for (i in 0 until n) mean += x[i]
-        mean /= n
-        var devSum = 0.0
-        for (i in 0 until n) {
+        var mean = 0.0f
+        var step = 2 // stride-2 sampling for fast statistics
+        var count = 0
+        var i = 0
+        while (i < n) {
+            mean += x[i]
+            count++
+            i += step
+        }
+        if (count == 0) return 0.0
+        mean /= count
+
+        var devSum = 0.0f
+        i = 0
+        while (i < n) {
             val d = x[i] - mean
             devSum += d * d
+            i += step
         }
-        val std = sqrt(devSum / n)
-        val cutoff = 1.6 * std
-        var count = 0
-        var robustSum = 0.0
-        for (i in 0 until n) {
-            if (kotlin.math.abs(x[i] - mean) <= cutoff) {
-                robustSum += x[i]
-                count++
+        val std = sqrt(devSum / count)
+        val cutoff = 1.6f * std
+        var robustSum = 0.0f
+        var robustCount = 0
+        i = 0
+        while (i < n) {
+            val xi = x[i]
+            if (kotlin.math.abs(xi - mean) <= cutoff) {
+                robustSum += xi
+                robustCount++
             }
+            i += step
         }
-        return if (count > 0) robustSum / count else mean
+        return if (robustCount > 0) (robustSum / robustCount).toDouble() else mean.toDouble()
     }
 
     fun process(y: FloatArray, ddc: Ddc, updateAllowed: Boolean = true): FloatArray {
@@ -579,11 +585,12 @@ class DspFrontend(
 ) {
     val baseDdc: Double = dcOffset + userOffset
     val iqCorr = IqCorrection()
-    val ddc = Ddc(sampleRate, baseDdc)
+    // DDC runs at 480 kHz (after 1st halfband decimation) to cut DDC compute time in half
+    val ddc = Ddc(sampleRate / 2.0, baseDdc)
 
-    private val hb1 = HalfbandDecimator(31)
-    private val hb2 = HalfbandDecimator(31)
-    private val decChannelFilter = DecimatingChannelFilter(midRate, DspConstants.BASEBAND_RATE.toDouble(), cutoffHz = 17500.0, numTaps = 31)
+    private val hb1 = HalfbandDecimator(15)
+    private val hb2 = HalfbandDecimator(15)
+    private val decChannelFilter = DecimatingChannelFilter(midRate, DspConstants.BASEBAND_RATE.toDouble(), cutoffHz = 17500.0, numTaps = 17)
     private val fmDemod = FmDemodulator()
     val afc = Afc(DspConstants.BASEBAND_RATE.toDouble(), baseDdc, maxAfcHz = afcMaxHz, loopGain = afcGain)
 
@@ -605,19 +612,21 @@ class DspFrontend(
 
     fun process(iqBuffer: ComplexBuffer, rssiGate: RssiGate? = null): ProcessResult {
         iqCorr.process(iqBuffer)
-        ddc.process(iqBuffer)
 
         // Stage 1: 960k -> 480k
         hb1.process(iqBuffer, hb1Buf)
 
+        // DDC Downconversion on 480 kS/s stream (32768 samples)
+        ddc.process(hb1Buf)
+
         // Stage 2: 480k -> 240k
         hb2.process(hb1Buf, hb2Buf)
 
-        // Stage 3: 240k -> 48k (decimate by 5 with 31-tap bandpass filter)
+        // Stage 3: 240k -> 48k (decimate by 5 with 17-tap bandpass filter)
         decChannelFilter.process(hb2Buf, basebandBuf)
 
-        // RSSI Calculation on baseband complex samples
-        var pwrSum = 0.0
+        // Fast RSSI Calculation on baseband complex samples
+        var pwrSum = 0.0f
         val n = basebandBuf.size
         val bbR = basebandBuf.real
         val bbI = basebandBuf.imag
@@ -626,8 +635,8 @@ class DspFrontend(
             val i = bbI[k]
             pwrSum += (r * r + i * i)
         }
-        val avgPwr = (pwrSum / max(1, n)).toFloat()
-        val rssi = (10.0 * log10(max(1e-12f, avgPwr).toDouble()) + rssiOffset).toFloat()
+        val avgPwr = pwrSum / max(1, n)
+        val rssi = (10.0 * log10(max(1e-12, avgPwr.toDouble())) + rssiOffset).toFloat()
 
         // FM Demodulation
         fmDemod.process(basebandBuf, pcmBuf)

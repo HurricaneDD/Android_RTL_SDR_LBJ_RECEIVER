@@ -65,6 +65,7 @@ fun SpectrumWaterfallView(
     peakDeltaHz: Double?,
     peakDb: Float?,
     fps: Float = 0.0f,
+    isReceiving: Boolean = false,
     onClick: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
@@ -135,14 +136,15 @@ fun SpectrumWaterfallView(
                     }
                 }
 
-                // Center Frequency and FPS frame rate positioned on the right
+                // Center Frequency and FPS frame rate positioned on the right (slightly lowered)
                 Column(
-                    horizontalAlignment = Alignment.End
+                    horizontalAlignment = Alignment.End,
+                    modifier = Modifier.padding(top = 4.dp)
                 ) {
                     Text(
                         text = String.format(Locale.US, "▲ %.4f MHz", freqHz / 1_000_000.0),
                         color = PrimaryBlueDark,
-                        fontSize = 14.sp,
+                        fontSize = 13.5.sp,
                         fontFamily = FontFamily.Monospace,
                         fontWeight = FontWeight.Bold
                     )
@@ -253,18 +255,18 @@ fun SpectrumWaterfallView(
                         strokeWidth = 1f
                     )
 
-                    // Draw Squelch Threshold Line
+                    // Draw Squelch Threshold Line (Bright Rose Red / 亮玫红色)
                     val thresholdNormY = (1.0f - (csThresholdDb - minDb) / dbRange).coerceIn(0f, 1f)
                     val thresholdY = thresholdNormY * canvasHeight
                     drawLine(
-                        color = Color(0xFFEF4444),
+                        color = Color(0xFFFF1493), // Bright Rose / 亮玫红
                         start = Offset(0f, thresholdY),
                         end = Offset(canvasWidth, thresholdY),
                         strokeWidth = 1.5f
                     )
 
-                    // Draw RSSI Bright Green Line Graph
-                    if (numPoints > 1) {
+                    // Draw RSSI Bright Green Line Graph (only when receiving signal)
+                    if (isReceiving && numPoints > 1) {
                         linePath.rewind()
                         fillPath.rewind()
 

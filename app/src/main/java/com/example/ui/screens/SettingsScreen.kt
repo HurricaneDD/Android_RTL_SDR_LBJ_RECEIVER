@@ -37,6 +37,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
@@ -60,6 +61,8 @@ import androidx.core.content.ContextCompat
 import com.example.driver.DriverLauncher
 import com.example.ui.ReceiverState
 import com.example.ui.components.AboutAppDialog
+import com.example.ui.components.BasebandAudioVolumeDialog
+import com.example.ui.components.ThemeSelectionDialog
 import com.example.ui.components.TtsEngineSelectionDialog
 import com.example.ui.theme.AmberSignal
 import com.example.ui.theme.BorderLight
@@ -86,9 +89,12 @@ fun SettingsScreen(
     onToggleBroadcastAlerts: (Boolean) -> Unit,
     onToggleAlertTone: (Boolean) -> Unit,
     onToggleAlertNotification: (Boolean) -> Unit = {},
+    onToggleBasebandAudio: (Boolean) -> Unit = {},
+    onSetBasebandAudioVolume: (Int) -> Unit = {},
     onToggleKeepAlive: (Boolean) -> Unit,
     onToggleSimulationButton: (Boolean) -> Unit,
     onSelectTtsEngineMode: (String) -> Unit = {},
+    onSelectThemeMode: (String) -> Unit = {},
     onClearTtsCache: () -> Pair<Int, Long> = { Pair(0, 0L) },
     onToggleEnableExternalAutomation: (Boolean) -> Unit = {},
     onResetAllSettings: () -> Unit,
@@ -101,6 +107,8 @@ fun SettingsScreen(
     var showResetDialog by remember { mutableStateOf(false) }
     var showAboutDialog by remember { mutableStateOf(false) }
     var showTtsEngineDialog by remember { mutableStateOf(false) }
+    var showThemeDialog by remember { mutableStateOf(false) }
+    var showBasebandVolumeDialog by remember { mutableStateOf(false) }
 
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
@@ -143,6 +151,26 @@ fun SettingsScreen(
             currentMode = state.ttsEngineMode,
             onSelectMode = onSelectTtsEngineMode,
             onDismiss = { showTtsEngineDialog = false }
+        )
+    }
+
+    if (showThemeDialog) {
+        ThemeSelectionDialog(
+            currentThemeMode = state.themeMode,
+            onSelectThemeMode = onSelectThemeMode,
+            onDismiss = { showThemeDialog = false }
+        )
+    }
+
+    if (showBasebandVolumeDialog) {
+        BasebandAudioVolumeDialog(
+            currentVolume = state.basebandAudioVolume,
+            onConfirm = { vol ->
+                onSetBasebandAudioVolume(vol)
+                showBasebandVolumeDialog = false
+                Toast.makeText(context, "已设置基带监听音量为: $vol", Toast.LENGTH_SHORT).show()
+            },
+            onDismiss = { showBasebandVolumeDialog = false }
         )
     }
 
@@ -242,11 +270,64 @@ fun SettingsScreen(
                     onCheckedChange = handleKeepAliveToggle
                 )
 
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { showBasebandVolumeDialog = true }
+                        .padding(horizontal = 14.dp, vertical = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = "基带音频监听 (模拟收音机底噪)",
+                                color = TextPrimary,
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Medium
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Surface(
+                                color = PrimaryBlueDark.copy(alpha = 0.10f),
+                                shape = RoundedCornerShape(4.dp)
+                            ) {
+                                Text(
+                                    text = "音量: ${state.basebandAudioVolume}",
+                                    color = PrimaryBlueDark,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    fontFamily = FontFamily.Monospace,
+                                    modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
+                                )
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = "读取SDR基带IQ数据，在手机扬声器实时播放解调音频与收音机沙沙白噪音，占据媒体音量。点击可校正音量 (0~100)",
+                            color = TextSecondary,
+                            fontSize = 11.sp
+                        )
+                    }
+                    Switch(
+                        checked = state.basebandAudioEnabled,
+                        onCheckedChange = onToggleBasebandAudio,
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = Color.White,
+                            checkedTrackColor = PrimaryBlue,
+                            uncheckedTrackColor = SurfaceSecondary
+                        )
+                    )
+                }
+
+                val themeLabel = when (state.themeMode) {
+                    "dark" -> "深色模式"
+                    "system" -> "跟随系统"
+                    else -> "浅色模式 (默认)"
+                }
                 SettingsItem(
-                    title = "关于本应用",
-                    subtitle = "作者信息、项目开源仓库及开发致谢说明",
-                    value = "查看",
-                    onClick = { showAboutDialog = true }
+                    title = "界面深色模式",
+                    subtitle = "切换浅色、深色模式或跟随系统设置",
+                    value = themeLabel,
+                    onClick = { showThemeDialog = true }
                 )
 
                 SettingsItem(
@@ -254,6 +335,13 @@ fun SettingsScreen(
                     subtitle = "将所有射频频率、增益、门限、校验及用户偏好恢复为默认值",
                     value = "恢复默认",
                     onClick = { showResetDialog = true }
+                )
+
+                SettingsItem(
+                    title = "关于本应用",
+                    subtitle = "作者信息、项目开源仓库及开发致谢说明",
+                    value = "查看",
+                    onClick = { showAboutDialog = true }
                 )
             }
         }

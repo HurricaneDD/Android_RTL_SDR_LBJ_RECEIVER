@@ -29,6 +29,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Link
@@ -36,6 +37,7 @@ import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material.icons.filled.Train
 import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material.icons.filled.ZoomIn
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -582,7 +584,7 @@ fun FftExplanationDialog(onDismiss: () -> Unit) {
                 )
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(
-                    text = "• RSSI (接收信号强度)：测量当前信道电磁波功率大小 (单位 dB)。数值越接近 0 (如 -50dB) 代表信号越强、列车越近；数值越小 (如 -110dB) 仅为环境底噪。信号冲破红线门限时才会触发解码。\n• AFC (自动频率控制)：自动频偏跟踪与动态补偿算法。列车高速行驶时的多普勒频移以及硬件温漂会导致频偏，AFC 可实时纠正频偏，确保信号锁死在中心频点，大幅提高解码率。\n• 硬件增益 (G) & PPM (P)：SDR 放大器增益与晶振频偏校准值。",
+                    text = "• RSSI (接收信号强度)：测量当前信道电磁波功率大小 (单位 dB)。数值越接近 0 (如 -50dB) 代表信号越强、列车越近；数值越小 (如 -110dB) 仅为环境底噪。信号冲破玫红色门限横线时才会触发解码。\n• AFC (自动频率控制)：自动频偏跟踪与动态补偿算法。列车高速行驶时的多普勒频移以及硬件温漂会导致频偏，AFC 可实时纠正频偏，确保信号锁死在中心频点，大幅提高解码率。\n• 硬件增益 (G) & PPM (P)：SDR 放大器增益与晶振频偏校准值。",
                     color = TextSecondary,
                     fontSize = 12.sp,
                     lineHeight = 17.sp
@@ -598,7 +600,7 @@ fun FftExplanationDialog(onDismiss: () -> Unit) {
                 )
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(
-                    text = "• 绿色折线：表示对应频段的信号能量 (dB)。\n• 黄色中心垂直标尺：代表当前调谐的目标中心频率 (821.2375 MHz)。\n• 红色水平虚线：代表「静噪接收门限 (Squelch)」。只有当信号折线冲破红线时，软件才会启动解调与解码，防止将外界杂音当作列车报文。",
+                    text = "• 绿色折线：表示对应频段的信号能量 (dB)（未启动接收信号时隐藏折线）。\n• 黄色中心垂直标尺：代表当前调谐的目标中心频率 (821.2375 MHz)。\n• 亮玫红色水平横线：代表「静噪接收门限 (Squelch)」。只有当信号折线冲破玫红线时，软件才会启动解调与解码，防止将外界杂音当作列车报文。",
                     color = TextSecondary,
                     fontSize = 12.sp,
                     lineHeight = 17.sp
@@ -614,7 +616,7 @@ fun FftExplanationDialog(onDismiss: () -> Unit) {
                 )
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(
-                    text = "当附近有列车车载 LBJ 设备发射数据时，中心频点附近会迅速隆起一个明显的能量尖峰并超过红线，下方 RSSI 数值会从 -100dB 跃升至 -60dB 以上，门控状态变为 ON，随之解码出车次与速度信息。",
+                    text = "当附近有列车车载 LBJ 设备发射数据时，中心频点附近会迅速隆起一个明显的能量尖峰并冲破玫红线，下方 RSSI 数值会从 -100dB 跃升至 -60dB 以上，门控状态变为 ON，随之解码出车次与速度信息。",
                     color = TextSecondary,
                     fontSize = 12.sp,
                     lineHeight = 17.sp
@@ -1251,6 +1253,202 @@ fun TtsEngineSelectionDialog(
         }
     )
 }
+
+@Composable
+fun ThemeSelectionDialog(
+    currentThemeMode: String,
+    onSelectThemeMode: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val options = listOf(
+        Triple("light", "浅色模式 (默认)", "保持清爽明亮的界面风格，白天室外清晰易读。"),
+        Triple("dark", "深色模式", "低功耗暗黑视觉风格，降低刺眼眩光，适合夜间或弱光环境。"),
+        Triple("system", "跟随系统", "根据 Android 系统当前的深色/浅色模式设置自动同步切换。")
+    )
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = SurfaceCard,
+        title = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    imageVector = Icons.Default.DarkMode,
+                    contentDescription = null,
+                    tint = PrimaryBlue,
+                    modifier = Modifier.padding(end = 8.dp)
+                )
+                Text(
+                    text = "界面深色模式设置",
+                    color = PrimaryBlueDark,
+                    fontSize = 17.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        },
+        text = {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                options.forEach { (modeKey, title, desc) ->
+                    val isSelected = (currentThemeMode == modeKey)
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(if (isSelected) PrimaryBlueDark.copy(alpha = 0.08f) else Color.Transparent)
+                            .border(
+                                width = 1.dp,
+                                color = if (isSelected) PrimaryBlueDark else BorderLight,
+                                shape = RoundedCornerShape(8.dp)
+                            )
+                            .clickable {
+                                onSelectThemeMode(modeKey)
+                                onDismiss()
+                            }
+                            .padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        RadioButton(
+                            selected = isSelected,
+                            onClick = {
+                                onSelectThemeMode(modeKey)
+                                onDismiss()
+                            },
+                            colors = RadioButtonDefaults.colors(
+                                selectedColor = PrimaryBlueDark,
+                                unselectedColor = TextMuted
+                            )
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = title,
+                                fontSize = 14.sp,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                color = if (isSelected) PrimaryBlueDark else TextPrimary
+                            )
+                            Spacer(modifier = Modifier.height(2.dp))
+                            Text(
+                                text = desc,
+                                fontSize = 11.5.sp,
+                                color = TextMuted,
+                                lineHeight = 15.sp
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("关闭", color = PrimaryBlueDark, fontWeight = FontWeight.Bold)
+            }
+        }
+    )
+}
+
+@Composable
+fun BasebandAudioVolumeDialog(
+    currentVolume: Int,
+    onConfirm: (Int) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var volume by remember { mutableFloatStateOf(currentVolume.toFloat().coerceIn(0f, 100f)) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = SurfaceCard,
+        title = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    imageVector = Icons.Default.VolumeUp,
+                    contentDescription = null,
+                    tint = PrimaryBlue,
+                    modifier = Modifier.padding(end = 8.dp)
+                )
+                Text(
+                    text = "校正基带音频监听音量",
+                    color = PrimaryBlueDark,
+                    fontSize = 17.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        },
+        text = {
+            Column {
+                Text(
+                    text = "调节扬声器中基带解调音频与收音机沙沙白噪音的基准增益强度。默认为 50，可调整范围为 0 ~ 100。",
+                    color = TextSecondary,
+                    fontSize = 12.sp,
+                    lineHeight = 16.sp
+                )
+                Spacer(modifier = Modifier.height(14.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    val currentInt = volume.toInt()
+                    Text(
+                        text = "当前音量: $currentInt${if (currentInt == 50) " (默认)" else if (currentInt == 0) " (静音)" else ""}",
+                        color = EmeraldGreen,
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Bold,
+                        fontFamily = FontFamily.Monospace
+                    )
+                    OutlinedButton(
+                        onClick = { volume = 50f }
+                    ) {
+                        Icon(
+                            Icons.Default.RestartAlt,
+                            contentDescription = "Default",
+                            tint = PrimaryBlue,
+                            modifier = Modifier.size(14.dp)
+                        )
+                        Spacer(modifier = Modifier.width(3.dp))
+                        Text("默认 (50)", fontSize = 11.sp, color = PrimaryBlueDark)
+                    }
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+                Slider(
+                    value = volume,
+                    onValueChange = { volume = it },
+                    valueRange = 0f..100f,
+                    steps = 100,
+                    colors = SliderDefaults.colors(
+                        thumbColor = PrimaryBlue,
+                        activeTrackColor = PrimaryBlue
+                    )
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text("0 (静音)", color = TextMuted, fontSize = 11.sp)
+                    Text("50 (默认)", color = TextMuted, fontSize = 11.sp)
+                    Text("100", color = TextMuted, fontSize = 11.sp)
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    onConfirm(volume.toInt().coerceIn(0, 100))
+                },
+                colors = ButtonDefaults.buttonColors(containerColor = PrimaryBlue)
+            ) {
+                Text("确定", color = Color.White, fontWeight = FontWeight.Bold)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("取消", color = TextSecondary)
+            }
+        }
+    )
+}
+
 
 
 

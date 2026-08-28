@@ -20,8 +20,8 @@ class BitSlicer(
     private var lastHardBit: Int = 0
     private var lastBitClk: Int = 0
 
-    // Gaussian smoothing FIR (31 taps)
-    private val bSmooth = FirDesign.gaussianSmoother(31, 1200.0, fs.toDouble(), 7.0)
+    // Gaussian smoothing FIR (15 taps for fast zero-allocation execution)
+    private val bSmooth = FirDesign.gaussianSmoother(15, 1200.0, fs.toDouble(), 7.0)
     private val nt = bSmooth.size
     private val ziSmooth = FloatArray(max(0, nt - 1))
 
