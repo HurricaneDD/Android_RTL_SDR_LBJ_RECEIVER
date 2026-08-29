@@ -9,6 +9,7 @@ import android.media.ToneGenerator
 import android.os.Build
 import android.os.Bundle
 import android.speech.tts.TextToSpeech
+import android.speech.tts.UtteranceProgressListener
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -41,7 +42,12 @@ class SoundAlertManager(
     private var playJob: Job? = null
     private val networkTts = NetworkTtsManager(context.applicationContext)
 
+    var onSpeechStateChanged: ((Boolean) -> Unit)? = null
+
     init {
+        networkTts.onSpeechStateChanged = { isSpeaking ->
+            onSpeechStateChanged?.invoke(isSpeaking)
+        }
         try {
             tts = TextToSpeech(context.applicationContext, this)
         } catch (_: Exception) {
@@ -62,6 +68,26 @@ class SoundAlertManager(
             }
             tts?.setPitch(1.0f)
             tts?.setSpeechRate(1.05f)
+
+            tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+                override fun onStart(utteranceId: String?) {
+                    onSpeechStateChanged?.invoke(true)
+                }
+
+                override fun onDone(utteranceId: String?) {
+                    onSpeechStateChanged?.invoke(false)
+                }
+
+                @Deprecated("Deprecated in Java")
+                override fun onError(utteranceId: String?) {
+                    onSpeechStateChanged?.invoke(false)
+                }
+
+                override fun onError(utteranceId: String?, errorCode: Int) {
+                    onSpeechStateChanged?.invoke(false)
+                }
+            })
+
             isTtsReady = true
         } else {
             isTtsReady = false
@@ -115,86 +141,30 @@ class SoundAlertManager(
     }
 
     /**
-     * Plays two short beeps ("滴滴") safely via STREAM mode AudioTrack.
+     * Plays two short beeps ("滴滴") safely.
      */
     fun playDoubleBeep(onComplete: (() -> Unit)? = null) {
         playJob?.cancel()
         playJob = scope.launch(Dispatchers.IO) {
-            var audioTrack: AudioTrack? = null
+            onSpeechStateChanged?.invoke(true)
             try {
-                val minBufSize = AudioTrack.getMinBufferSize(
-                    sampleRate,
-                    AudioFormat.CHANNEL_OUT_MONO,
-                    AudioFormat.ENCODING_PCM_16BIT
-                )
-                val bufferSize = if (minBufSize > 0) kotlin.math.max(minBufSize * 2, 2048) else 4096
+                val tg = ToneGenerator(AudioManager.STREAM_MUSIC, 92)
+                tg.startTone(ToneGenerator.TONE_PROP_BEEP, 80)
+                delay(120)
+                tg.startTone(ToneGenerator.TONE_PROP_BEEP, 80)
+                delay(120)
+                tg.release()
+            } catch (_: Exception) {}
 
-                audioTrack = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-                    try {
-                        AudioTrack(
-                            AudioAttributes.Builder()
-                                .setUsage(AudioAttributes.USAGE_MEDIA)
-                                .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
-                                .build(),
-                            AudioFormat.Builder()
-                                .setSampleRate(sampleRate)
-                                .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
-                                .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
-                                .build(),
-                            bufferSize,
-                            AudioTrack.MODE_STREAM,
-                            AudioManager.AUDIO_SESSION_ID_GENERATE
-                        )
-                    } catch (_: Exception) {
-                        @Suppress("DEPRECATION")
-                        AudioTrack(
-                            AudioManager.STREAM_MUSIC,
-                            sampleRate,
-                            AudioFormat.CHANNEL_OUT_MONO,
-                            AudioFormat.ENCODING_PCM_16BIT,
-                            bufferSize,
-                            AudioTrack.MODE_STREAM
-                        )
-                    }
-                } else {
-                    @Suppress("DEPRECATION")
-                    AudioTrack(
-                        AudioManager.STREAM_MUSIC,
-                        sampleRate,
-                        AudioFormat.CHANNEL_OUT_MONO,
-                        AudioFormat.ENCODING_PCM_16BIT,
-                        bufferSize,
-                        AudioTrack.MODE_STREAM
-                    )
-                }
-
-                if (audioTrack.state == AudioTrack.STATE_INITIALIZED) {
-                    audioTrack.play()
-                    audioTrack.write(doubleBeepPcm, 0, doubleBeepPcm.size)
-                    delay(260)
-                    try {
-                        if (audioTrack.playState == AudioTrack.PLAYSTATE_PLAYING) {
-                            audioTrack.stop()
-                        }
-                    } catch (_: Exception) {}
-                }
-            } catch (_: Exception) {
-                // Fallback to ToneGenerator if AudioTrack encounters device restriction
-                try {
-                    val tg = ToneGenerator(AudioManager.STREAM_MUSIC, 85)
-                    tg.startTone(ToneGenerator.TONE_PROP_BEEP, 80)
-                    delay(150)
-                    tg.startTone(ToneGenerator.TONE_PROP_BEEP, 80)
-                    delay(150)
-                    tg.release()
-                } catch (_: Exception) {}
-            } finally {
-                try {
-                    audioTrack?.release()
-                } catch (_: Exception) {}
-            }
             if (currentCoroutineContext().isActive) {
-                onComplete?.invoke()
+                if (onComplete != null) {
+                    onComplete.invoke()
+                } else {
+                    delay(60)
+                    onSpeechStateChanged?.invoke(false)
+                }
+            } else {
+                onSpeechStateChanged?.invoke(false)
             }
         }
     }

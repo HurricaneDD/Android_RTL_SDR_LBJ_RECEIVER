@@ -139,7 +139,7 @@ fun SpectrumWaterfallView(
                 // Center Frequency and FPS frame rate positioned on the right (slightly lowered)
                 Column(
                     horizontalAlignment = Alignment.End,
-                    modifier = Modifier.padding(top = 4.dp)
+                    modifier = Modifier.padding(top = 6.dp)
                 ) {
                     Text(
                         text = String.format(Locale.US, "▲ %.4f MHz", freqHz / 1_000_000.0),

@@ -54,6 +54,8 @@ class NetworkTtsManager(private val context: Context) {
     private var currentPlayJob: Job? = null
     private val playLock = Any()
 
+    var onSpeechStateChanged: ((Boolean) -> Unit)? = null
+
     init {
         enableTls12OnAndroid6()
     }
@@ -231,6 +233,7 @@ class NetworkTtsManager(private val context: Context) {
                             mediaPlayer = null
                         }
                     }
+                    onSpeechStateChanged?.invoke(false)
                     onCompletion?.invoke()
                 }
                 mp.setOnErrorListener { _, what, extra ->
@@ -244,16 +247,19 @@ class NetworkTtsManager(private val context: Context) {
                             mediaPlayer = null
                         }
                     }
+                    onSpeechStateChanged?.invoke(false)
                     onCompletion?.invoke()
                     true
                 }
 
                 mp.prepare()
+                onSpeechStateChanged?.invoke(true)
                 mp.start()
                 Log.d(tag, "MediaPlayer started playing successfully")
             } catch (e: Exception) {
                 Log.e(tag, "MediaPlayer prepare error: ${e.message}", e)
                 stopPlayback()
+                onSpeechStateChanged?.invoke(false)
                 onCompletion?.invoke()
             }
         }

@@ -36,6 +36,10 @@ class BasebandAudioPlayer(
     private var deemphState: Float = 0.0f
     private var volumeGain: Float = 0.15f // 50% volume equals 30% of initial baseline gain (0.15f)
 
+    @Volatile
+    private var isDucked: Boolean = false
+    private var duckGainMultiplier: Float = 1.0f
+
     @Synchronized
     fun start() {
         if (isPlaying.get()) return
@@ -121,16 +125,22 @@ class BasebandAudioPlayer(
         val targetSize = minOf(n, shortBuf.size)
 
         var dState = deemphState
-        val gain = volumeGain
+        val targetDuck = if (isDucked) 0.08f else 1.0f
+        var currentDuck = duckGainMultiplier
+        val baseGain = volumeGain
 
-        // Fast de-emphasis + soft limiting (prevents clipping clicks)
+        // Fast de-emphasis + smooth ducking transition + soft limiting (prevents clipping clicks)
         for (i in 0 until targetSize) {
+            currentDuck += 0.005f * (targetDuck - currentDuck)
+            val effectiveGain = baseGain * currentDuck
+
             val raw = pcm[i]
             dState += 0.35f * (raw - dState) // RC ~ 75µs filter for warm analog radio hiss
-            val saturated = (dState * gain).coerceIn(-0.95f, 0.95f)
+            val saturated = (dState * effectiveGain).coerceIn(-0.95f, 0.95f)
             shortBuf[i] = (saturated * 32767.0f).toInt().toShort()
         }
         deemphState = dState
+        duckGainMultiplier = currentDuck
 
         if (!audioQueue.offer(shortBuf)) {
             // Drop oldest to avoid audio delay accumulation
@@ -170,6 +180,10 @@ class BasebandAudioPlayer(
 
     fun setVolumeGain(gain: Float) {
         volumeGain = gain.coerceIn(0.05f, 1.5f)
+    }
+
+    fun setDucked(ducked: Boolean) {
+        isDucked = ducked
     }
 
     fun isRunning(): Boolean = isPlaying.get()

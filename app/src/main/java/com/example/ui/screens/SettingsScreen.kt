@@ -254,7 +254,8 @@ fun SettingsScreen(
 
         Spacer(modifier = Modifier.height(14.dp))
 
-        // 常规系统与保活
+        // 小分类: 其他设置
+        SettingsSectionHeader(icon = Icons.Default.FilterAlt, title = "其他设置")
         Card(
             modifier = Modifier
                 .fillMaxWidth()
@@ -302,7 +303,7 @@ fun SettingsScreen(
                         }
                         Spacer(modifier = Modifier.height(2.dp))
                         Text(
-                            text = "读取SDR基带IQ数据，在手机扬声器实时播放解调音频与收音机沙沙白噪音，占据媒体音量。点击可校正音量 (0~100)",
+                            text = "读取SDR基带IQ数据，在手机扬声器实时播放解调音频与收音机沙沙白噪音，占据媒体音量。点击可校正音量",
                             color = TextSecondary,
                             fontSize = 11.sp
                         )
@@ -320,8 +321,8 @@ fun SettingsScreen(
 
                 val themeLabel = when (state.themeMode) {
                     "dark" -> "深色模式"
-                    "system" -> "跟随系统"
-                    else -> "浅色模式 (默认)"
+                    "light" -> "浅色模式"
+                    else -> "跟随系统 (默认)"
                 }
                 SettingsItem(
                     title = "界面深色模式",

@@ -161,7 +161,11 @@ class LbjViewModel(application: Application) : AndroidViewModel(application) {
 
     private val fftChannel = kotlinx.coroutines.channels.Channel<Unit>(kotlinx.coroutines.channels.Channel.CONFLATED)
 
-    private val soundAlertManager = SoundAlertManager(getApplication(), viewModelScope)
+    private val soundAlertManager = SoundAlertManager(getApplication(), viewModelScope).apply {
+        onSpeechStateChanged = { isSpeaking ->
+            basebandAudioPlayer.setDucked(isSpeaking)
+        }
+    }
     private var lastDecodedTrainNo: String = ""
     private var lastAlertPlayTime: Long = 0L
     private var currentTrainSignalCount: Int = 0

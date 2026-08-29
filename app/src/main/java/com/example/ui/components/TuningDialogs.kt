@@ -1,13 +1,17 @@
 package com.example.ui.components
 
 import android.widget.Toast
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -48,8 +52,6 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.RadioButtonDefaults
-import androidx.compose.material3.Slider
-import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -61,7 +63,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalClipboardManager
@@ -77,6 +81,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
@@ -95,6 +100,94 @@ import com.example.ui.theme.TextMuted
 import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.TextSecondary
 import java.util.Locale
+
+@Composable
+fun SleekSlider(
+    value: Float,
+    onValueChange: (Float) -> Unit,
+    modifier: Modifier = Modifier,
+    valueRange: ClosedFloatingPointRange<Float> = 0f..100f,
+    activeColor: Color = PrimaryBlue,
+    inactiveColor: Color = BorderLight,
+    trackHeight: Dp = 3.dp,
+    thumbRadius: Dp = 7.dp,
+    enabled: Boolean = true
+) {
+    BoxWithConstraints(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(38.dp)
+            .pointerInput(enabled, valueRange) {
+                if (!enabled) return@pointerInput
+                detectTapGestures { offset ->
+                    val availableWidth = size.width - 2 * thumbRadius.toPx()
+                    if (availableWidth > 0) {
+                        val touchX = (offset.x - thumbRadius.toPx()).coerceIn(0f, availableWidth)
+                        val fraction = touchX / availableWidth
+                        val newValue = valueRange.start + fraction * (valueRange.endInclusive - valueRange.start)
+                        onValueChange(newValue)
+                    }
+                }
+            }
+            .pointerInput(enabled, valueRange) {
+                if (!enabled) return@pointerInput
+                detectHorizontalDragGestures { change, _ ->
+                    change.consume()
+                    val availableWidth = size.width - 2 * thumbRadius.toPx()
+                    if (availableWidth > 0) {
+                        val touchX = (change.position.x - thumbRadius.toPx()).coerceIn(0f, availableWidth)
+                        val fraction = touchX / availableWidth
+                        val newValue = valueRange.start + fraction * (valueRange.endInclusive - valueRange.start)
+                        onValueChange(newValue)
+                    }
+                }
+            },
+        contentAlignment = Alignment.CenterStart
+    ) {
+        val totalRange = valueRange.endInclusive - valueRange.start
+        val fraction = if (totalRange > 0f) ((value - valueRange.start) / totalRange).coerceIn(0f, 1f) else 0f
+
+        Canvas(modifier = Modifier.fillMaxSize()) {
+            val thumbRadiusPx = thumbRadius.toPx()
+            val trackHeightPx = trackHeight.toPx()
+            val startX = thumbRadiusPx
+            val endX = size.width - thumbRadiusPx
+            val trackWidth = endX - startX
+            val centerY = size.height / 2f
+
+            if (trackWidth > 0) {
+                // Background Track (Inactive)
+                drawLine(
+                    color = inactiveColor,
+                    start = Offset(startX, centerY),
+                    end = Offset(endX, centerY),
+                    strokeWidth = trackHeightPx,
+                    cap = StrokeCap.Round
+                )
+
+                val currentThumbX = startX + fraction * trackWidth
+
+                // Progress Track (Active)
+                if (currentThumbX > startX) {
+                    drawLine(
+                        color = activeColor,
+                        start = Offset(startX, centerY),
+                        end = Offset(currentThumbX, centerY),
+                        strokeWidth = trackHeightPx,
+                        cap = StrokeCap.Round
+                    )
+                }
+
+                // Sleek Thumb Circle
+                drawCircle(
+                    color = activeColor,
+                    radius = thumbRadiusPx,
+                    center = Offset(currentThumbX, centerY)
+                )
+            }
+        }
+    }
+}
 
 @Composable
 fun FrequencyDialog(
@@ -347,16 +440,11 @@ fun CsThresholdDialog(
                         Text("默认 (-55dB)", fontSize = 11.sp, color = PrimaryBlueDark)
                     }
                 }
-                Spacer(modifier = Modifier.height(8.dp))
-                Slider(
+                Spacer(modifier = Modifier.height(10.dp))
+                SleekSlider(
                     value = threshold,
                     onValueChange = { threshold = it },
-                    valueRange = -90.0f..-20.0f,
-                    steps = 70,
-                    colors = SliderDefaults.colors(
-                        thumbColor = PrimaryBlue,
-                        activeTrackColor = PrimaryBlue
-                    )
+                    valueRange = -90.0f..-20.0f
                 )
             }
         },
@@ -746,14 +834,14 @@ fun AboutAppDialog(onDismiss: () -> Unit) {
                     fontWeight = FontWeight.Bold
                 )
                 Text(
-                    text = "v1.0.0 (Build 10)",
+                    text = "v1.1.0 (Build 1)",
                     color = TextMuted,
                     fontSize = 12.sp,
                     fontFamily = FontFamily.Monospace
                 )
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(
-                    text = "构建时间：2026-08-23 16:00",
+                    text = "构建时间：2026-08-29 21:50",
                     color = TextMuted,
                     fontSize = 11.5.sp,
                     fontFamily = FontFamily.Monospace
@@ -1261,9 +1349,9 @@ fun ThemeSelectionDialog(
     onDismiss: () -> Unit
 ) {
     val options = listOf(
-        Triple("light", "浅色模式 (默认)", "保持清爽明亮的界面风格，白天室外清晰易读。"),
-        Triple("dark", "深色模式", "低功耗暗黑视觉风格，降低刺眼眩光，适合夜间或弱光环境。"),
-        Triple("system", "跟随系统", "根据 Android 系统当前的深色/浅色模式设置自动同步切换。")
+        Triple("system", "跟随系统 (默认)", "根据 Android 系统当前的深色/浅色模式设置自动同步切换。"),
+        Triple("light", "浅色模式", "保持清爽明亮的界面风格，白天室外清晰易读。"),
+        Triple("dark", "深色模式", "低功耗暗黑视觉风格，降低刺眼眩光，适合夜间或弱光环境。")
     )
 
     AlertDialog(
@@ -1410,16 +1498,11 @@ fun BasebandAudioVolumeDialog(
                         Text("默认 (50)", fontSize = 11.sp, color = PrimaryBlueDark)
                     }
                 }
-                Spacer(modifier = Modifier.height(8.dp))
-                Slider(
+                Spacer(modifier = Modifier.height(10.dp))
+                SleekSlider(
                     value = volume,
                     onValueChange = { volume = it },
-                    valueRange = 0f..100f,
-                    steps = 100,
-                    colors = SliderDefaults.colors(
-                        thumbColor = PrimaryBlue,
-                        activeTrackColor = PrimaryBlue
-                    )
+                    valueRange = 0f..100f
                 )
                 Row(
                     modifier = Modifier.fillMaxWidth(),
