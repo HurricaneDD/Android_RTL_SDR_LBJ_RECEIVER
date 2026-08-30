@@ -22,19 +22,30 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CleaningServices
+import androidx.compose.material.icons.filled.Headphones
+import androidx.compose.material.icons.filled.HeadsetOff
+import androidx.compose.material.icons.filled.NotificationsActive
+import androidx.compose.material.icons.filled.NotificationsNone
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Sensors
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Usb
+import androidx.compose.material.icons.filled.VolumeOff
+import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
@@ -80,6 +91,9 @@ fun DashboardScreen(
     onOpenWatchlistDialog: () -> Unit,
     onOpenFftExplanationDialog: () -> Unit,
     onOpenTrainTypeRuleDialog: () -> Unit,
+    onToggleAlertTone: (Boolean) -> Unit,
+    onToggleAlertNotification: (Boolean) -> Unit,
+    onToggleBasebandAudio: (Boolean) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val scrollState = rememberScrollState()
@@ -369,6 +383,164 @@ fun DashboardScreen(
             currentStationKmText = state.currentRouteStationKmText,
             onOpenTrainTypeRuleDialog = onOpenTrainTypeRuleDialog
         )
+
+        Spacer(modifier = Modifier.height(14.dp))
+
+        // 播报系统设置
+        Text(
+            text = "播报系统设置",
+            color = TextSecondary,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.padding(bottom = 8.dp)
+        )
+
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .border(1.dp, BorderLight, RoundedCornerShape(12.dp))
+                .testTag("broadcast_system_settings_card"),
+            shape = RoundedCornerShape(12.dp),
+            colors = CardDefaults.cardColors(containerColor = SurfaceCard)
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 12.dp, horizontal = 6.dp),
+                horizontalArrangement = Arrangement.SpaceEvenly,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // Item 1: 来车语音播报
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clickable { onToggleAlertTone(!state.alertToneEnabled) }
+                        .padding(horizontal = 2.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Icon(
+                        imageVector = if (state.alertToneEnabled) Icons.Default.VolumeUp else Icons.Default.VolumeOff,
+                        contentDescription = "语音播报",
+                        tint = if (state.alertToneEnabled) PrimaryBlue else TextMuted,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "来车语音播报",
+                        color = if (state.alertToneEnabled) TextPrimary else TextSecondary,
+                        fontSize = 11.sp,
+                        fontWeight = if (state.alertToneEnabled) FontWeight.Bold else FontWeight.Normal,
+                        maxLines = 1
+                    )
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Switch(
+                        checked = state.alertToneEnabled,
+                        onCheckedChange = onToggleAlertTone,
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = Color.White,
+                            checkedTrackColor = PrimaryBlue,
+                            uncheckedTrackColor = SurfaceSecondary
+                        ),
+                        modifier = Modifier
+                            .scale(0.75f)
+                            .height(26.dp)
+                            .testTag("dashboard_toggle_speech_alert")
+                    )
+                }
+
+                // Divider line 1
+                Box(
+                    modifier = Modifier
+                        .width(1.dp)
+                        .height(44.dp)
+                        .background(BorderLight)
+                )
+
+                // Item 2: 来车提示通知
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clickable { onToggleAlertNotification(!state.alertNotificationEnabled) }
+                        .padding(horizontal = 2.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Icon(
+                        imageVector = if (state.alertNotificationEnabled) Icons.Default.NotificationsActive else Icons.Default.NotificationsNone,
+                        contentDescription = "提示通知",
+                        tint = if (state.alertNotificationEnabled) PrimaryBlue else TextMuted,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "来车提示通知",
+                        color = if (state.alertNotificationEnabled) TextPrimary else TextSecondary,
+                        fontSize = 11.sp,
+                        fontWeight = if (state.alertNotificationEnabled) FontWeight.Bold else FontWeight.Normal,
+                        maxLines = 1
+                    )
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Switch(
+                        checked = state.alertNotificationEnabled,
+                        onCheckedChange = onToggleAlertNotification,
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = Color.White,
+                            checkedTrackColor = PrimaryBlue,
+                            uncheckedTrackColor = SurfaceSecondary
+                        ),
+                        modifier = Modifier
+                            .scale(0.75f)
+                            .height(26.dp)
+                            .testTag("dashboard_toggle_notification_alert")
+                    )
+                }
+
+                // Divider line 2
+                Box(
+                    modifier = Modifier
+                        .width(1.dp)
+                        .height(44.dp)
+                        .background(BorderLight)
+                )
+
+                // Item 3: 收听基带音频
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clickable { onToggleBasebandAudio(!state.basebandAudioEnabled) }
+                        .padding(horizontal = 2.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Icon(
+                        imageVector = if (state.basebandAudioEnabled) Icons.Default.Headphones else Icons.Default.HeadsetOff,
+                        contentDescription = "收听音频",
+                        tint = if (state.basebandAudioEnabled) PrimaryBlue else TextMuted,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Text(
+                        text = "收听基带音频",
+                        color = if (state.basebandAudioEnabled) TextPrimary else TextSecondary,
+                        fontSize = 11.sp,
+                        fontWeight = if (state.basebandAudioEnabled) FontWeight.Bold else FontWeight.Normal,
+                        maxLines = 1
+                    )
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Switch(
+                        checked = state.basebandAudioEnabled,
+                        onCheckedChange = onToggleBasebandAudio,
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = Color.White,
+                            checkedTrackColor = PrimaryBlue,
+                            uncheckedTrackColor = SurfaceSecondary
+                        ),
+                        modifier = Modifier
+                            .scale(0.75f)
+                            .height(26.dp)
+                            .testTag("dashboard_toggle_baseband_audio")
+                    )
+                }
+            }
+        }
 
         Spacer(modifier = Modifier.height(14.dp))
 

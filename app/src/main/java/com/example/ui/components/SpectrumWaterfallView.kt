@@ -89,11 +89,11 @@ fun SpectrumWaterfallView(
             .fillMaxWidth()
             .background(SurfaceCard, RoundedCornerShape(12.dp))
             .border(1.dp, BorderLight, RoundedCornerShape(12.dp))
-            .padding(14.dp)
+            .padding(12.dp)
             .testTag("spectrum_waterfall_card")
     ) {
         Column {
-            // Header Row: Title & 科普说明 on left, Frequency and Frame Rate on the right
+            // Header Row: Title & 科普说明 on left, Gain/PPM & SampleRate/FPS on the right
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
@@ -136,21 +136,21 @@ fun SpectrumWaterfallView(
                     }
                 }
 
-                // Center Frequency and FPS frame rate positioned on the right (slightly lowered)
+                // Top right info: Line 1 = 硬件增益 & PPM偏置, Line 2 = 采样率 & 帧率 (Font sizes match)
                 Column(
-                    horizontalAlignment = Alignment.End,
-                    modifier = Modifier.padding(top = 6.dp)
+                    horizontalAlignment = Alignment.End
                 ) {
                     Text(
-                        text = String.format(Locale.US, "▲ %.4f MHz", freqHz / 1_000_000.0),
-                        color = PrimaryBlueDark,
-                        fontSize = 13.5.sp,
+                        text = String.format(Locale.US, "增益: %.1fdB · PPM: %+d", gainDb, ppm),
+                        color = TextSecondary,
+                        fontSize = 10.5.sp,
                         fontFamily = FontFamily.Monospace,
-                        fontWeight = FontWeight.Bold
+                        fontWeight = FontWeight.Medium
                     )
+                    val fpsText = if (fps > 0f) String.format(Locale.US, "%.1f FPS", fps) else "-- FPS"
                     Text(
-                        text = if (fps > 0f) String.format(Locale.US, "%.1f FPS", fps) else "-- FPS",
-                        color = if (fps > 10f) EmeraldGreen else TextMuted,
+                        text = "采样率: 960kS/s · $fpsText",
+                        color = TextSecondary,
                         fontSize = 10.5.sp,
                         fontFamily = FontFamily.Monospace,
                         fontWeight = FontWeight.Medium
@@ -159,36 +159,6 @@ fun SpectrumWaterfallView(
             }
 
             Spacer(modifier = Modifier.height(8.dp))
-
-            // 硬件增益、PPM、采样率 各占一整行
-            Column(
-                modifier = Modifier.fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(2.dp)
-            ) {
-                Text(
-                    text = String.format(Locale.US, "硬件增益: %.1f dB", gainDb),
-                    color = TextSecondary,
-                    fontSize = 12.sp,
-                    fontFamily = FontFamily.Monospace,
-                    fontWeight = FontWeight.Normal
-                )
-                Text(
-                    text = String.format(Locale.US, "PPM 偏置: %d PPM", ppm),
-                    color = TextSecondary,
-                    fontSize = 12.sp,
-                    fontFamily = FontFamily.Monospace,
-                    fontWeight = FontWeight.Normal
-                )
-                Text(
-                    text = "采样率: 960 kS/s",
-                    color = TextSecondary,
-                    fontSize = 12.sp,
-                    fontFamily = FontFamily.Monospace,
-                    fontWeight = FontWeight.Normal
-                )
-            }
-
-            Spacer(modifier = Modifier.height(10.dp))
 
             val gridDbs = remember { floatArrayOf(-10f, -30f, -50f, -70f) }
 

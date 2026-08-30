@@ -222,24 +222,13 @@ fun FrequencyDialog(
                         .testTag("freq_input_field")
                 )
                 Spacer(modifier = Modifier.height(10.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                OutlinedButton(
+                    onClick = { text = "821.2375" },
+                    modifier = Modifier.fillMaxWidth()
                 ) {
-                    OutlinedButton(
-                        onClick = { text = "821.2375" },
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        Icon(Icons.Default.RestartAlt, contentDescription = "Default", tint = PrimaryBlue, modifier = Modifier.height(16.dp).width(16.dp))
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text("恢复默认 (821.2375)", fontSize = 11.sp, color = PrimaryBlueDark)
-                    }
-                    OutlinedButton(
-                        onClick = { text = "450.0000" },
-                        modifier = Modifier.weight(0.7f)
-                    ) {
-                        Text("450.0M", fontSize = 11.sp, color = TextSecondary)
-                    }
+                    Icon(Icons.Default.RestartAlt, contentDescription = "Default", tint = PrimaryBlue, modifier = Modifier.height(16.dp).width(16.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("恢复默认频率 (821.2375 MHz)", fontSize = 12.sp, color = PrimaryBlueDark)
                 }
             }
         },
@@ -355,7 +344,7 @@ fun PpmDialog(
         text = {
             Column {
                 Text(
-                    text = "修正 RTL-SDR 硬件晶振温漂误差。标准设备默认值为 0 PPM。",
+                    text = "修正 RTL-SDR 硬件晶振温漂误差。标准设备默认值为 1 PPM。",
                     color = TextSecondary,
                     fontSize = 12.sp
                 )
@@ -363,19 +352,19 @@ fun PpmDialog(
                 OutlinedTextField(
                     value = text,
                     onValueChange = { text = it },
-                    label = { Text("PPM 误差 (默认: 0)") },
+                    label = { Text("PPM 误差 (默认: 1)") },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     modifier = Modifier.fillMaxWidth()
                 )
                 Spacer(modifier = Modifier.height(8.dp))
                 OutlinedButton(
-                    onClick = { text = "0" },
+                    onClick = { text = "1" },
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Icon(Icons.Default.RestartAlt, contentDescription = "Default", tint = PrimaryBlue, modifier = Modifier.height(16.dp).width(16.dp))
                     Spacer(modifier = Modifier.width(4.dp))
-                    Text("恢复默认 (0 PPM)", fontSize = 11.sp, color = PrimaryBlueDark)
+                    Text("恢复默认 (1 PPM)", fontSize = 11.sp, color = PrimaryBlueDark)
                 }
             }
         },

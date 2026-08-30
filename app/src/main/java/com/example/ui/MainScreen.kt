@@ -170,6 +170,9 @@ fun MainScreen(viewModel: LbjViewModel) {
                 onOpenWatchlistDialog = { showWatchlistDialog = true },
                 onOpenFftExplanationDialog = { showFftExplanationDialog = true },
                 onOpenTrainTypeRuleDialog = { showTrainTypeRuleDialog = true },
+                onToggleAlertTone = { viewModel.setAlertToneEnabled(it) },
+                onToggleAlertNotification = { viewModel.setAlertNotificationEnabled(it) },
+                onToggleBasebandAudio = { viewModel.setBasebandAudioEnabled(it) },
                 modifier = screenModifier
             )
             1 -> HistoryScreen(

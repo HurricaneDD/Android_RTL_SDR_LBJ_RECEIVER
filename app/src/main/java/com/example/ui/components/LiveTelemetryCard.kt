@@ -350,10 +350,18 @@ fun LiveTelemetryCard(
             Spacer(modifier = Modifier.height(12.dp))
 
             // Station Arrival & ETA Monitor Section
-            val (etaBg, etaFg) = when (etaInfo.etaStatus) {
-                "即将到达" -> Pair(RedSoft, RedAlert)
-                "接近 (5分内)", "接近", "接近中" -> Pair(AmberSoft, AmberSignal)
-                "远离/已过" -> Pair(SurfaceSecondary, TextMuted)
+            val isUnconfigured = etaInfo.etaStatus.contains("未设置") || 
+                    etaInfo.etaStatus == "线路未知" || 
+                    etaInfo.etaStatus == "错包忽略" ||
+                    etaInfo.etaStatus == "等待车次" ||
+                    etaInfo.etaStatus == "方向未知" ||
+                    etaInfo.etaStatus == "公里标未知"
+
+            val (etaBg, etaFg) = when {
+                etaInfo.etaStatus == "即将到达" -> Pair(RedSoft, RedAlert)
+                etaInfo.etaStatus in listOf("接近 (5分内)", "接近", "接近中") -> Pair(AmberSoft, AmberSignal)
+                etaInfo.etaStatus == "远离/已过" -> Pair(SurfaceSecondary, TextMuted)
+                isUnconfigured -> Pair(SurfaceSecondary, TextMuted)
                 else -> Pair(PrimaryBlueSoft, PrimaryBlueDark)
             }
 
@@ -361,7 +369,7 @@ fun LiveTelemetryCard(
                 modifier = Modifier
                     .fillMaxWidth()
                     .background(etaBg, RoundedCornerShape(10.dp))
-                    .border(1.dp, etaFg.copy(alpha = 0.3f), RoundedCornerShape(10.dp))
+                    .border(1.dp, if (isUnconfigured) BorderLight else etaFg.copy(alpha = 0.3f), RoundedCornerShape(10.dp))
                     .padding(12.dp)
                     .testTag("eta_monitor_card")
             ) {
@@ -405,13 +413,20 @@ fun LiveTelemetryCard(
                     Column(horizontalAlignment = Alignment.End) {
                         Box(
                             modifier = Modifier
-                                .background(Color.White.copy(alpha = 0.85f), RoundedCornerShape(4.dp))
-                                .border(0.5.dp, etaFg.copy(alpha = 0.5f), RoundedCornerShape(4.dp))
+                                .background(
+                                    if (isUnconfigured) SurfaceCard else etaFg.copy(alpha = 0.12f),
+                                    RoundedCornerShape(4.dp)
+                                )
+                                .border(
+                                    0.5.dp,
+                                    if (isUnconfigured) BorderLight else etaFg.copy(alpha = 0.35f),
+                                    RoundedCornerShape(4.dp)
+                                )
                                 .padding(horizontal = 6.dp, vertical = 2.dp)
                         ) {
                             Text(
                                 text = etaInfo.etaStatus,
-                                color = etaFg,
+                                color = if (isUnconfigured) TextSecondary else etaFg,
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.Bold
                             )

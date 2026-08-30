@@ -63,7 +63,7 @@ class LbjPreferences(context: Context) {
         set(value) = prefs.edit().putBoolean(KEY_KEEP_ALIVE, value).apply()
 
     var broadcastAlerts: Boolean
-        get() = prefs.getBoolean(KEY_BROADCAST_ALERTS, true)
+        get() = prefs.getBoolean(KEY_BROADCAST_ALERTS, false)
         set(value) = prefs.edit().putBoolean(KEY_BROADCAST_ALERTS, value).apply()
 
     var strictFilter: Boolean

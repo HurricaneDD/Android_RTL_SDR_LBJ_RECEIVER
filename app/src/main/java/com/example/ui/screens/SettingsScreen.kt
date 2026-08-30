@@ -281,7 +281,7 @@ fun SettingsScreen(
                     Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Text(
-                                text = "基带音频监听 (模拟收音机底噪)",
+                                text = "基带音频监听",
                                 color = TextPrimary,
                                 fontSize = 14.sp,
                                 fontWeight = FontWeight.Medium

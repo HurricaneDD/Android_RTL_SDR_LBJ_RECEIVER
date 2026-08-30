@@ -60,7 +60,7 @@ data class ReceiverState(
     val keywords: List<String> = emptyList(),
     val warningMessage: String = "",
     val warningTime: Long = 0L,
-    val broadcastAlerts: Boolean = true,
+    val broadcastAlerts: Boolean = false,
     val alertToneEnabled: Boolean = false,
     val alertNotificationEnabled: Boolean = false,
     val keepAliveEnabled: Boolean = false,
@@ -754,14 +754,14 @@ class LbjViewModel(application: Application) : AndroidViewModel(application) {
         setShowErrWarn(true)
         setFilterMode("highlight")
         setKeywords(emptyList())
-        setBroadcastAlerts(true)
+        setBroadcastAlerts(false)
         setAlertToneEnabled(false)
         setAlertNotificationEnabled(false)
         setKeepAliveEnabled(false)
         setShowSimulationButton(false)
         setTtsEngineMode("auto")
         setEnableExternalAutomation(false)
-        setThemeMode("light")
+        setThemeMode("system")
         setBasebandAudioEnabled(false)
         setBasebandAudioVolume(50)
     }
