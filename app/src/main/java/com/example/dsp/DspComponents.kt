@@ -532,7 +532,7 @@ class Afc(
         }
         lastScore = score
 
-        val alphaDc = if (score >= minAltScore) 1.0 else 0.01
+        val alphaDc = if (score >= minAltScore) 0.65 else 0.15
         dcNorm += alphaDc * (dcNow - dcNorm)
         dcNorm = dcNorm.coerceIn(-maxNorm, maxNorm)
 
@@ -544,7 +544,7 @@ class Afc(
             step = step.coerceIn(-maxStepHz, maxStepHz)
             val oldAfc = afcHz
             afcHz = (afcHz + step).coerceIn(-maxAfcHz, maxAfcHz)
-            if (kotlin.math.abs(afcHz - oldAfc) >= 5.0) {
+            if (kotlin.math.abs(afcHz - oldAfc) >= 3.0) {
                 ddc.setOffset(baseDdcHz + afcHz)
                 updated = true
             }

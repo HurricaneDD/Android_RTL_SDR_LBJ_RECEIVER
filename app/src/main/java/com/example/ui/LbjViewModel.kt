@@ -197,8 +197,8 @@ class LbjViewModel(application: Application) : AndroidViewModel(application) {
             // Play alert sound & speak announcement immediately upon train detection
             val currentNo = telemetry.trainNo
             if (currentNo != "----" && currentNo.isNotBlank()) {
-                val isSameTrain = (activeTrainNo == currentNo)
-                if (!isSameTrain) {
+                val isNewTrainSession = (activeTrainNo == null || activeTrainNo != currentNo || activeTrainRecordId == null)
+                if (isNewTrainSession) {
                     currentTrainSignalCount = 1
                     activeTrainNo = currentNo
                     if (_receiverState.value.alertToneEnabled) {
@@ -229,39 +229,34 @@ class LbjViewModel(application: Application) : AndroidViewModel(application) {
                         }
                     }
                 }
-            }
 
-            // Update foreground keep alive service notification if enabled
-            if (_receiverState.value.keepAliveEnabled && _receiverState.value.isRunning) {
-                if (telemetry.trainNo != "----") {
+                // Update foreground keep alive service notification if enabled
+                if (_receiverState.value.keepAliveEnabled && _receiverState.value.isRunning) {
                     LbjKeepAliveService.update(
                         getApplication(),
                         "已探测列车: ${telemetry.trainNo} (${telemetry.direction})",
                         "机车: ${telemetry.locoModel} | 线路: ${telemetry.route}"
                     )
                 }
-            }
 
-            // Send Android broadcast if enabled
-            if (_receiverState.value.broadcastAlerts && telemetry.trainNo != "----") {
-                DriverLauncher.sendAlertBroadcast(
-                    getApplication(),
-                    train = telemetry.trainNo,
-                    direction = telemetry.direction,
-                    speed = telemetry.speed,
-                    position = telemetry.positionKm,
-                    loco = telemetry.locoModel,
-                    locoCode = telemetry.locoCode,
-                    route = telemetry.route,
-                    category = telemetry.category
-                )
-            }
+                // Send Android broadcast if enabled
+                if (_receiverState.value.broadcastAlerts) {
+                    DriverLauncher.sendAlertBroadcast(
+                        getApplication(),
+                        train = telemetry.trainNo,
+                        direction = telemetry.direction,
+                        speed = telemetry.speed,
+                        position = telemetry.positionKm,
+                        loco = telemetry.locoModel,
+                        locoCode = telemetry.locoCode,
+                        route = telemetry.route,
+                        category = telemetry.category
+                    )
+                }
 
-            // Deduplicated Train History: Only 1 record per train pass
-            if (telemetry.trainNo != "----" && telemetry.trainNo.isNotBlank()) {
-                val currentNo = telemetry.trainNo
+                // Deduplicated Train History: Only 1 record per train pass, guaranteed recorded on reception
                 viewModelScope.launch(Dispatchers.IO) {
-                    if (activeTrainNo == null || activeTrainNo != currentNo) {
+                    if (isNewTrainSession) {
                         // Finalize previous train if any
                         activeTrainRecordId?.let { prevId ->
                             dao.updateLastSeenTime(prevId, now)
@@ -279,10 +274,10 @@ class LbjViewModel(application: Application) : AndroidViewModel(application) {
                         )
                         val insertedId = dao.insertTrainRecord(newRecord)
                         activeTrainRecordId = insertedId
-                        activeTrainNo = currentNo
                     } else {
-                        // Update existing train session
-                        activeTrainRecordId?.let { recordId ->
+                        // Update existing train session with latest details
+                        val recordId = activeTrainRecordId
+                        if (recordId != null) {
                             dao.updateTrainSession(
                                 id = recordId,
                                 locoModel = telemetry.locoModel,
@@ -291,6 +286,19 @@ class LbjViewModel(application: Application) : AndroidViewModel(application) {
                                 category = telemetry.category,
                                 lastSeenTime = now
                             )
+                        } else {
+                            val newRecord = TrainRecord(
+                                trainNo = currentNo,
+                                direction = telemetry.direction,
+                                locoModel = telemetry.locoModel,
+                                locoCode = telemetry.locoCode,
+                                route = telemetry.route,
+                                category = telemetry.category,
+                                firstSeenTime = now,
+                                lastSeenTime = now
+                            )
+                            val insertedId = dao.insertTrainRecord(newRecord)
+                            activeTrainRecordId = insertedId
                         }
                     }
                 }
@@ -306,10 +314,7 @@ class LbjViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         decoder.onWarningCleared = {
-            val curWarn = _receiverState.value.warningMessage
-            if (curWarn.contains("BCH") || curWarn.contains("校验错误") || curWarn.contains("干扰")) {
-                _receiverState.value = _receiverState.value.copy(warningMessage = "")
-            }
+            // Keep warning for user-specified 4 seconds duration; auto-cleared in DSP loop timer
         }
 
         rtlClient.onStateChanged = { state, error ->
@@ -504,25 +509,25 @@ class LbjViewModel(application: Application) : AndroidViewModel(application) {
 
             val nowMs = System.currentTimeMillis()
 
-            // Check if train signal is lost (>10s with no packet): auto clear live display & finalize session
+            // Check if active train session in DB should be finalized (>60s with no packet).
+            // NOTE: Do NOT clear _liveTelemetry so train details stay visible until the next train or manual reset.
             if (_liveTelemetry.value.trainNo != "----" && lastValidTelemetryTime > 0L) {
-                if (nowMs - lastValidTelemetryTime > 10000L) {
+                if (nowMs - lastValidTelemetryTime > 60000L) {
                     finalizeActiveTrainSession()
-                    clearLiveTelemetry()
                     currentTrainSignalCount = 0
                     if (_receiverState.value.keepAliveEnabled) {
                         LbjKeepAliveService.update(
                             getApplication(),
                             "SDR-LBJ 信号监听守候中",
-                            "列车已远离 (信号丢失自动复位)"
+                            "等待下一趟列车报文"
                         )
                     }
                 }
             }
 
-            // Auto-clear BCH warning message if expired (>3.5s)
+            // Auto-clear BCH warning message if expired (>= 4.0s)
             val curWarn = _receiverState.value.warningMessage
-            if (curWarn.isNotEmpty() && (curWarn.contains("BCH") || curWarn.contains("干扰")) && (nowMs - _receiverState.value.warningTime > 3500L)) {
+            if (curWarn.isNotEmpty() && (curWarn.contains("BCH") || curWarn.contains("干扰")) && (nowMs - _receiverState.value.warningTime >= 4000L)) {
                 _receiverState.value = _receiverState.value.copy(warningMessage = "")
             }
 
@@ -565,11 +570,10 @@ class LbjViewModel(application: Application) : AndroidViewModel(application) {
                 decoder.resetDpllSoft()
             }
 
-            // 4. Feed baseband PCM to slicer & decoder
-            if (dspRes.rxActive) {
-                decoder.processAudioChunk(dspRes.pcmFloat)
-            } else if (rssiGate.justDeactivated) {
-                decoder.resetReceiverState()
+            // 4. Feed baseband PCM to slicer & decoder continuously to avoid chopping off preamble & sync words
+            decoder.processAudioChunk(dspRes.pcmFloat)
+
+            if (rssiGate.justDeactivated) {
                 if (resetAfcOnRelease && dspFrontend.afc.enabled) {
                     dspFrontend.resetAfc()
                 }

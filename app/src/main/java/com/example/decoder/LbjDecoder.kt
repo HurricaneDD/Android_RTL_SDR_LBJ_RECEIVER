@@ -66,14 +66,14 @@ class LbjDecoder(
         shiftReg = ((shiftReg shl 1) or (bit.toLong() and 1L)) and 0xFFFFFFFFL
 
         if (state == 0) {
-            if (BchDecoder.popcount32(shiftReg xor DspConstants.SYNC_STD) <= 2) {
+            if (BchDecoder.popcount32(shiftReg xor DspConstants.SYNC_STD) <= 3) {
                 pol = 1
                 state = 1
                 wordCount = 0
                 framePos = 0
                 cwBitCount = 0
                 huntTimeout = 0
-            } else if (BchDecoder.popcount32(shiftReg xor DspConstants.SYNC_INV) <= 2) {
+            } else if (BchDecoder.popcount32(shiftReg xor DspConstants.SYNC_INV) <= 3) {
                 pol = -1
                 state = 1
                 wordCount = 0
@@ -98,10 +98,10 @@ class LbjDecoder(
                 framePos++
                 wordCount++
 
-                if (BchDecoder.popcount32(corrected xor DspConstants.SYNC_STD) <= 2) {
+                if (BchDecoder.popcount32(corrected xor DspConstants.SYNC_STD) <= 3) {
                     wordCount = 0
                     framePos = 0
-                } else if (BchDecoder.popcount32(corrected xor DspConstants.IDLE_WORD) <= 2) {
+                } else if (BchDecoder.popcount32(corrected xor DspConstants.IDLE_WORD) <= 3) {
                     if (inMessage) {
                         triggerLbjParse()
                     }
@@ -111,12 +111,12 @@ class LbjDecoder(
                     }
                     val addrCandidate = ((corrected ushr 13) and 0x3FFFFL) * 8L + ((framePos - 1) / 2)
                     val funcCandidate = ((corrected ushr 11) and 3L).toInt()
-                    if (isBchValid && addrCandidate in 1233000L..1235000L) {
+                    if (addrCandidate in 1220000L..1260000L) {
                         currentFunc = funcCandidate
                         currentAddr = addrCandidate
                         currentMsgCws.clear()
                         inMessage = true
-                        currentMsgHasError = false
+                        currentMsgHasError = !isBchValid
                     } else {
                         inMessage = false
                         currentMsgCws.clear()
@@ -145,9 +145,14 @@ class LbjDecoder(
                     emitWarning(currentFunc)
                 }
                 if (strictFilter) {
-                    currentMsgCws.clear()
-                    currentMsgHasError = false
-                    return
+                    // In strict filter mode, still attempt decoding if BCD contains valid train characters
+                    val bcd = extractBcd(currentMsgCws)
+                    val raw = if (bcd.length >= 6) bcd.substring(0, 6).trim() else ""
+                    if (!Pattern.matches("^[A-Za-z0-9]+$", raw)) {
+                        currentMsgCws.clear()
+                        currentMsgHasError = false
+                        return
+                    }
                 }
             }
             val validForEta = !currentMsgHasError
@@ -164,7 +169,7 @@ class LbjDecoder(
 
     private fun emitWarning(func: Int) {
         val now = System.currentTimeMillis()
-        if (now - lastWarnTime < 1500) return
+        if (now - lastWarnTime < 4000) return
         lastWarnTime = now
         val d = if (func == 1) "下行" else if (func == 3) "上行" else "未知"
         val warnMsg = "⚠ 探测到 $d 信号 干扰严重 (BCH校验错误)"
@@ -291,7 +296,7 @@ class LbjDecoder(
             if (tid != null && sessions.containsKey(tid)) {
                 val session = sessions[tid]!!
                 val lastTs = (session["timestamp"] as? Long) ?: 0L
-                if (!(isStandalone && now - lastTs > 2000)) {
+                if (!(isStandalone && now - lastTs > 30000)) {
                     val buf = if (bcd.length >= 50) bcd.takeLast(50) else bcd
                     val ih = buildString {
                         for (c in buf) append(bcdToHexChar(c))
@@ -426,8 +431,8 @@ class LbjDecoder(
             }
         }
 
-        // Evict expired sessions (>10s)
-        val expired = sessions.filter { now - ((it.value["timestamp"] as? Long) ?: 0L) > 10000 }.keys
+        // Evict expired sessions (>120s)
+        val expired = sessions.filter { now - ((it.value["timestamp"] as? Long) ?: 0L) > 120000 }.keys
         for (k in expired) {
             sessions.remove(k)
             if (lastTrain == k) {

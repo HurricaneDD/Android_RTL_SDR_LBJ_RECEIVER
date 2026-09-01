@@ -81,9 +81,9 @@ class BitSlicer(
         var lh = lastHardBit
         var lc = lastBitClk
 
-        val maxDelta = ncoStep * 0.02
+        val maxDelta = ncoStep * 0.08
         val step = ncoStep
-        val hyst = 0.03f
+        val hyst = 0.025f
 
         for (i in 0 until n) {
             val v = bb[i]
@@ -91,18 +91,18 @@ class BitSlicer(
             if (v > mx) {
                 mx = v
             } else {
-                mx -= halfAmp * 0.0005f
+                mx -= halfAmp * 0.0015f
             }
 
             if (v < mn) {
                 mn = v
             } else {
-                mn += halfAmp * 0.0005f
+                mn += halfAmp * 0.0015f
             }
 
             val th = (mx + mn) * 0.5f
             val amp = max(1e-6f, mx - mn)
-            val h = max(0.006f, min(hyst, 0.15f * amp))
+            val h = max(0.002f, min(hyst, 0.08f * amp))
 
             val hb = when {
                 v > th + h -> 1
@@ -113,9 +113,9 @@ class BitSlicer(
             if (hb != lh) {
                 var err = ph
                 if (err > 0.5) err -= 1.0
-                pllInt += 0.005 * err
+                pllInt += 0.008 * err
                 pllInt = pllInt.coerceIn(-maxDelta, maxDelta)
-                ph -= (0.1 * err + pllInt)
+                ph -= (0.12 * err + pllInt)
             }
             lh = hb
             ph += step
