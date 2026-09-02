@@ -63,6 +63,39 @@ object LocomotiveDict {
     fun getLocoName(typeCode: Int): String {
         return LOCOS[typeCode] ?: "未知机车($typeCode)"
     }
+
+    fun hasLoco(typeCode: Int): Boolean {
+        return LOCOS.containsKey(typeCode)
+    }
+
+    /**
+     * 判断两个车次字符串是否指向同一趟列车会话（例如 "K516" 与 "516"，或两者相同）
+     */
+    fun isSameTrain(trainA: String, trainB: String): Boolean {
+        val a = trainA.trim().uppercase()
+        val b = trainB.trim().uppercase()
+        if (a.isEmpty() || b.isEmpty() || a == "----" || b == "----") return false
+        if (a == b) return true
+
+        val numA = a.filter { it.isDigit() }
+        val numB = b.filter { it.isDigit() }
+        if (numA.isNotEmpty() && numA == numB) {
+            val prefixA = a.filter { it.isLetter() }
+            val prefixB = b.filter { it.isLetter() }
+            if (prefixA.isEmpty() || prefixB.isEmpty() || prefixA == prefixB) {
+                return true
+            }
+        }
+        return false
+    }
+
+    /**
+     * 提取纯数字基准车次（去除字母前缀），用于短报文和详细报文关联
+     */
+    fun extractBaseTrainNumber(trainNo: String): String {
+        val digits = trainNo.trim().filter { it.isDigit() }
+        return if (digits.isNotEmpty()) digits else trainNo.trim()
+    }
 }
 
 object TrainCategorizer {

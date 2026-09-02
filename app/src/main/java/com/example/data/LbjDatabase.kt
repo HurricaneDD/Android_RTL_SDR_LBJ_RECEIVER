@@ -33,6 +33,21 @@ interface LbjDao {
     @Query("UPDATE train_records SET lastSeenTime = :lastSeenTime WHERE id = :id")
     suspend fun updateLastSeenTime(id: Long, lastSeenTime: Long)
 
+    @Query("SELECT * FROM train_records WHERE (trainNo = :trainNo OR trainNo = :baseTrainNo OR :trainNo LIKE '%' || trainNo) AND lastSeenTime >= :minTime ORDER BY lastSeenTime DESC LIMIT 1")
+    suspend fun findRecentTrainSession(trainNo: String, baseTrainNo: String, minTime: Long): TrainRecord?
+
+    @Query("UPDATE train_records SET trainNo = :trainNo, direction = :direction, locoModel = :locoModel, locoCode = :locoCode, route = :route, category = :category, lastSeenTime = :lastSeenTime WHERE id = :id")
+    suspend fun updateFullTrainRecord(
+        id: Long,
+        trainNo: String,
+        direction: String,
+        locoModel: String,
+        locoCode: String,
+        route: String,
+        category: String,
+        lastSeenTime: Long
+    )
+
     @Query("SELECT * FROM train_records ORDER BY firstSeenTime DESC LIMIT 200")
     fun getAllTrainRecords(): Flow<List<TrainRecord>>
 

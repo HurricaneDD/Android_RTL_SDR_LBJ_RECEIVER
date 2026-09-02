@@ -10,6 +10,7 @@ import com.example.data.TrainRecord
 import com.example.decoder.ArrivalEstimator
 import com.example.decoder.EtaInfo
 import com.example.decoder.LbjDecoder
+import com.example.decoder.LocomotiveDict
 import com.example.decoder.TrainTelemetry
 import com.example.driver.DriverLauncher
 import com.example.driver.RtlTcpClient
@@ -197,7 +198,9 @@ class LbjViewModel(application: Application) : AndroidViewModel(application) {
             // Play alert sound & speak announcement immediately upon train detection
             val currentNo = telemetry.trainNo
             if (currentNo != "----" && currentNo.isNotBlank()) {
-                val isNewTrainSession = (activeTrainNo == null || activeTrainNo != currentNo || activeTrainRecordId == null)
+                val isSame = activeTrainNo != null && LocomotiveDict.isSameTrain(activeTrainNo!!, currentNo)
+                val isNewTrainSession = !isSame || activeTrainRecordId == null
+
                 if (isNewTrainSession) {
                     currentTrainSignalCount = 1
                     activeTrainNo = currentNo
@@ -223,6 +226,10 @@ class LbjViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 } else {
                     currentTrainSignalCount++
+                    // If current packet has letter prefix while active train was plain digits, upgrade active train name
+                    if (currentNo.any { it.isLetter() } && activeTrainNo?.none { it.isLetter() } == true) {
+                        activeTrainNo = currentNo
+                    }
                     if (currentTrainSignalCount % 4 == 0) {
                         if (_receiverState.value.alertToneEnabled) {
                             soundAlertManager.playDoubleBeep()
@@ -234,7 +241,7 @@ class LbjViewModel(application: Application) : AndroidViewModel(application) {
                 if (_receiverState.value.keepAliveEnabled && _receiverState.value.isRunning) {
                     LbjKeepAliveService.update(
                         getApplication(),
-                        "已探测列车: ${telemetry.trainNo} (${telemetry.direction})",
+                        "已探测列车: ${activeTrainNo ?: telemetry.trainNo} (${telemetry.direction})",
                         "机车: ${telemetry.locoModel} | 线路: ${telemetry.route}"
                     )
                 }
@@ -243,7 +250,7 @@ class LbjViewModel(application: Application) : AndroidViewModel(application) {
                 if (_receiverState.value.broadcastAlerts) {
                     DriverLauncher.sendAlertBroadcast(
                         getApplication(),
-                        train = telemetry.trainNo,
+                        train = activeTrainNo ?: telemetry.trainNo,
                         direction = telemetry.direction,
                         speed = telemetry.speed,
                         position = telemetry.positionKm,
@@ -256,37 +263,35 @@ class LbjViewModel(application: Application) : AndroidViewModel(application) {
 
                 // Deduplicated Train History: Only 1 record per train pass, guaranteed recorded on reception
                 viewModelScope.launch(Dispatchers.IO) {
+                    val baseNo = LocomotiveDict.extractBaseTrainNumber(currentNo)
                     if (isNewTrainSession) {
-                        // Finalize previous train if any
-                        activeTrainRecordId?.let { prevId ->
-                            dao.updateLastSeenTime(prevId, now)
-                        }
-                        // Insert new train record
-                        val newRecord = TrainRecord(
+                        // Check if there is an existing session for the same train in the database within 10 minutes
+                        val recentRecord = dao.findRecentTrainSession(
                             trainNo = currentNo,
-                            direction = telemetry.direction,
-                            locoModel = telemetry.locoModel,
-                            locoCode = telemetry.locoCode,
-                            route = telemetry.route,
-                            category = telemetry.category,
-                            firstSeenTime = now,
-                            lastSeenTime = now
+                            baseTrainNo = baseNo,
+                            minTime = now - 10 * 60 * 1000L
                         )
-                        val insertedId = dao.insertTrainRecord(newRecord)
-                        activeTrainRecordId = insertedId
-                    } else {
-                        // Update existing train session with latest details
-                        val recordId = activeTrainRecordId
-                        if (recordId != null) {
-                            dao.updateTrainSession(
-                                id = recordId,
-                                locoModel = telemetry.locoModel,
-                                locoCode = telemetry.locoCode,
-                                route = telemetry.route,
-                                category = telemetry.category,
+
+                        if (recentRecord != null) {
+                            // Resume and merge into existing session to prevent duplicate split records
+                            activeTrainRecordId = recentRecord.id
+                            val bestTrainNo = if (currentNo.any { it.isLetter() }) currentNo else recentRecord.trainNo
+                            dao.updateFullTrainRecord(
+                                id = recentRecord.id,
+                                trainNo = bestTrainNo,
+                                direction = if (telemetry.direction.isNotEmpty() && !telemetry.direction.startsWith("未知")) telemetry.direction else recentRecord.direction,
+                                locoModel = if (telemetry.locoModel != "----") telemetry.locoModel else recentRecord.locoModel,
+                                locoCode = if (telemetry.locoCode != "---") telemetry.locoCode else recentRecord.locoCode,
+                                route = if (telemetry.route != "----") telemetry.route else recentRecord.route,
+                                category = if (telemetry.category != "等待信号...") telemetry.category else recentRecord.category,
                                 lastSeenTime = now
                             )
                         } else {
+                            // Finalize previous train if any
+                            activeTrainRecordId?.let { prevId ->
+                                dao.updateLastSeenTime(prevId, now)
+                            }
+                            // Insert new train record
                             val newRecord = TrainRecord(
                                 trainNo = currentNo,
                                 direction = telemetry.direction,
@@ -299,6 +304,55 @@ class LbjViewModel(application: Application) : AndroidViewModel(application) {
                             )
                             val insertedId = dao.insertTrainRecord(newRecord)
                             activeTrainRecordId = insertedId
+                        }
+                    } else {
+                        // Update existing train session with latest details
+                        val recordId = activeTrainRecordId
+                        if (recordId != null) {
+                            val bestTrainNo = if (currentNo.any { it.isLetter() }) currentNo else (activeTrainNo ?: currentNo)
+                            dao.updateFullTrainRecord(
+                                id = recordId,
+                                trainNo = bestTrainNo,
+                                direction = telemetry.direction,
+                                locoModel = if (telemetry.locoModel != "----") telemetry.locoModel else "----",
+                                locoCode = if (telemetry.locoCode != "---") telemetry.locoCode else "---",
+                                route = if (telemetry.route != "----") telemetry.route else "----",
+                                category = telemetry.category,
+                                lastSeenTime = now
+                            )
+                        } else {
+                            val recentRecord = dao.findRecentTrainSession(
+                                trainNo = currentNo,
+                                baseTrainNo = baseNo,
+                                minTime = now - 10 * 60 * 1000L
+                            )
+                            if (recentRecord != null) {
+                                activeTrainRecordId = recentRecord.id
+                                val bestTrainNo = if (currentNo.any { it.isLetter() }) currentNo else recentRecord.trainNo
+                                dao.updateFullTrainRecord(
+                                    id = recentRecord.id,
+                                    trainNo = bestTrainNo,
+                                    direction = telemetry.direction,
+                                    locoModel = if (telemetry.locoModel != "----") telemetry.locoModel else recentRecord.locoModel,
+                                    locoCode = if (telemetry.locoCode != "---") telemetry.locoCode else recentRecord.locoCode,
+                                    route = if (telemetry.route != "----") telemetry.route else recentRecord.route,
+                                    category = telemetry.category,
+                                    lastSeenTime = now
+                                )
+                            } else {
+                                val newRecord = TrainRecord(
+                                    trainNo = currentNo,
+                                    direction = telemetry.direction,
+                                    locoModel = telemetry.locoModel,
+                                    locoCode = telemetry.locoCode,
+                                    route = telemetry.route,
+                                    category = telemetry.category,
+                                    firstSeenTime = now,
+                                    lastSeenTime = now
+                                )
+                                val insertedId = dao.insertTrainRecord(newRecord)
+                                activeTrainRecordId = insertedId
+                            }
                         }
                     }
                 }
@@ -509,10 +563,10 @@ class LbjViewModel(application: Application) : AndroidViewModel(application) {
 
             val nowMs = System.currentTimeMillis()
 
-            // Check if active train session in DB should be finalized (>60s with no packet).
+            // Check if active train session in DB should be finalized (>180s with no packet).
             // NOTE: Do NOT clear _liveTelemetry so train details stay visible until the next train or manual reset.
             if (_liveTelemetry.value.trainNo != "----" && lastValidTelemetryTime > 0L) {
-                if (nowMs - lastValidTelemetryTime > 60000L) {
+                if (nowMs - lastValidTelemetryTime > 180000L) {
                     finalizeActiveTrainSession()
                     currentTrainSignalCount = 0
                     if (_receiverState.value.keepAliveEnabled) {

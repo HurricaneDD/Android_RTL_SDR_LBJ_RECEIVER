@@ -823,14 +823,14 @@ fun AboutAppDialog(onDismiss: () -> Unit) {
                     fontWeight = FontWeight.Bold
                 )
                 Text(
-                    text = "v1.1.0 (Build 1)",
+                    text = "v1.1.0 (Build 2)",
                     color = TextMuted,
                     fontSize = 12.sp,
                     fontFamily = FontFamily.Monospace
                 )
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(
-                    text = "构建时间：2026-08-29 21:50",
+                    text = "构建时间：2026-09-02 15:55",
                     color = TextMuted,
                     fontSize = 11.5.sp,
                     fontFamily = FontFamily.Monospace

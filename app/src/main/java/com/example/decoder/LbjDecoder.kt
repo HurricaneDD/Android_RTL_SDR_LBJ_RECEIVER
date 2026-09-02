@@ -111,7 +111,7 @@ class LbjDecoder(
                     }
                     val addrCandidate = ((corrected ushr 13) and 0x3FFFFL) * 8L + ((framePos - 1) / 2)
                     val funcCandidate = ((corrected ushr 11) and 3L).toInt()
-                    if (addrCandidate in 1220000L..1260000L) {
+                    if (addrCandidate in 1233980L..1234020L) {
                         currentFunc = funcCandidate
                         currentAddr = addrCandidate
                         currentMsgCws.clear()
@@ -144,15 +144,15 @@ class LbjDecoder(
                 if (showErrWarn) {
                     emitWarning(currentFunc)
                 }
-                if (strictFilter) {
-                    // In strict filter mode, still attempt decoding if BCD contains valid train characters
-                    val bcd = extractBcd(currentMsgCws)
-                    val raw = if (bcd.length >= 6) bcd.substring(0, 6).trim() else ""
-                    if (!Pattern.matches("^[A-Za-z0-9]+$", raw)) {
-                        currentMsgCws.clear()
-                        currentMsgHasError = false
-                        return
-                    }
+                // When BCH error is present, data bits may have flipped.
+                // Do NOT allow creating any new train session from corrupted packets to prevent ghost train creation.
+                val bcd = extractBcd(currentMsgCws)
+                val raw = if (bcd.length >= 6) bcd.substring(0, 6).trim() else ""
+                val existingSession = sessions[raw] ?: lastTrain?.let { sessions[it] }
+                if (existingSession == null) {
+                    currentMsgCws.clear()
+                    currentMsgHasError = false
+                    return
                 }
             }
             val validForEta = !currentMsgHasError
@@ -232,8 +232,8 @@ class LbjDecoder(
         }
 
         val isShort = (addr == 1233999L || addr == 1234000L) && bcd.length >= 15
-        val isMerged = (addr == 1233999L || addr == 1234000L || addr == 1234002L) && bcd.length >= 65
-        val isStandalone = (addr == 1234001L || addr == 1234002L) && bcd.length < 65
+        val isMerged = (addr in listOf(1233999L, 1234000L, 1234002L)) && bcd.length >= 65
+        val isStandalone = (addr in listOf(1234001L, 1234002L)) && bcd.length in 30..64
 
         var baseTrain: String? = null
 
@@ -297,81 +297,92 @@ class LbjDecoder(
                 val session = sessions[tid]!!
                 val lastTs = (session["timestamp"] as? Long) ?: 0L
                 if (!(isStandalone && now - lastTs > 30000)) {
-                    val buf = if (bcd.length >= 50) bcd.takeLast(50) else bcd
-                    val ih = buildString {
-                        for (c in buf) append(bcdToHexChar(c))
+                    val buf = if (isMerged) {
+                        if (bcd.length >= 65) bcd.substring(15, 65) else bcd.drop(15)
+                    } else {
+                        bcd
                     }
 
-                    var lc = ""
-                    if (ih.length >= 6) {
-                        try {
-                            val c1 = ih.substring(0, 2).toInt(16)
-                            val c2 = ih.substring(2, 4).toInt(16)
-                            if (strictFilter) {
-                                if (c1 in 48..57 || c1 in 65..90) lc += c1.toChar()
-                                if (c2 in 48..57 || c2 in 65..90) lc += c2.toChar()
-                            } else {
-                                if (c1 in 32..126 && c1 != 34 && c1 != 44) lc += c1.toChar()
-                                if (c2 in 32..126 && c2 != 34 && c2 != 44) lc += c2.toChar()
-                            }
-                        } catch (_: Exception) {}
-                    }
-                    lc = lc.replace(" ", "").trim()
-
-                    val lr = if (buf.length >= 12) buf.substring(4, 12) else ""
-                    var lm = "----"
-                    var lk = "---"
-                    if (lr.length >= 3) {
-                        val cp = lr.substring(0, 3)
-                        val np = lr.substring(3).trim()
-                        if (cp.all { it.isDigit() }) {
-                            lk = cp
-                            val ti = cp.toInt()
-                            val ln = LocomotiveDict.getLocoName(ti)
-                            var locoNum = np
-                            if (strictFilter) {
-                                if (!locoNum.all { it.isDigit() }) locoNum = "----"
-                            } else if (locoNum.isEmpty() || locoNum.any { it in listOf('*', '-', 'X', ' ') }) {
-                                locoNum = "----"
-                            }
-                            lm = "$ln-$locoNum"
+                    // Detailed payload must be at least 30 characters
+                    if (buf.length >= 30) {
+                        val ih = buildString {
+                            for (c in buf) append(bcdToHexChar(c))
                         }
-                    }
 
-                    var ru = "----"
-                    if (ih.length >= 30) {
-                        try {
-                            val hexPart = ih.substring(14, 30)
-                            val bytes = hexStringToByteArray(hexPart)
-                            val gbkCharset = try {
-                                Charset.forName("GBK")
-                            } catch (_: Exception) {
-                                Charset.forName("GB2312")
+                        // Prefix verification (index 0..3): 2 ASCII characters
+                        var lc = ""
+                        var isPrefixValid = false
+                        if (ih.length >= 4) {
+                            try {
+                                val c1 = ih.substring(0, 2).toInt(16)
+                                val c2 = ih.substring(2, 4).toInt(16)
+                                val ok1 = (c1 == 32 || c1 in 48..57 || c1 in 65..90)
+                                val ok2 = (c2 == 32 || c2 in 48..57 || c2 in 65..90)
+                                if (ok1 && ok2) {
+                                    isPrefixValid = true
+                                    if (c1 in 65..90 || c1 in 48..57) lc += c1.toChar()
+                                    if (c2 in 65..90 || c2 in 48..57) lc += c2.toChar()
+                                }
+                            } catch (_: Exception) {}
+                        }
+                        lc = lc.replace(" ", "").trim()
+
+                        // Locomotive verification (index 4..11): 8 characters: 3 code + 5 number
+                        val lr = if (buf.length >= 12) buf.substring(4, 12) else ""
+                        var lm = "----"
+                        var lk = "---"
+                        if (isPrefixValid && lr.length >= 8) {
+                            val cp = lr.substring(0, 3)
+                            val np = lr.substring(3).trim()
+                            if (cp.all { it.isDigit() }) {
+                                val ti = cp.toInt()
+                                if (LocomotiveDict.hasLoco(ti)) {
+                                    // Loco number must be 3 to 5 digits, not mixed or corrupted
+                                    if (np.length in 3..5 && np.all { it.isDigit() } && np != "0000" && np != "00000") {
+                                        lk = cp
+                                        val ln = LocomotiveDict.getLocoName(ti)
+                                        lm = "$ln-$np"
+                                    }
+                                }
                             }
-                            val dec = String(bytes, gbkCharset).replace("\u0000", "").trim()
-                            if (strictFilter) {
-                                if (dec.isNotEmpty() && Pattern.matches("^[\\u4e00-\\u9fa5A-Za-z0-9\\-\\s]+$", dec)) {
+                        }
+
+                        // Route verification (index 14..29): 16 hex chars = 8 GBK bytes
+                        var ru = "----"
+                        if (ih.length >= 30) {
+                            try {
+                                val hexPart = ih.substring(14, 30)
+                                val bytes = hexStringToByteArray(hexPart)
+                                val gbkCharset = try {
+                                    Charset.forName("GBK")
+                                } catch (_: Exception) {
+                                    Charset.forName("GB2312")
+                                }
+                                val dec = String(bytes, gbkCharset).replace("\u0000", "").trim()
+                                if (strictFilter) {
+                                    if (dec.isNotEmpty() && Pattern.matches("^[\\u4e00-\\u9fa5A-Za-z0-9\\-\\s]+$", dec)) {
+                                        ru = dec
+                                    }
+                                } else if (dec.isNotEmpty() && Pattern.compile("[\\u4e00-\\u9fa5a-zA-Z0-9]").matcher(dec).find()) {
                                     ru = dec
                                 }
-                            } else if (dec.isNotEmpty() && Pattern.compile("[\\u4e00-\\u9fa5a-zA-Z0-9]").matcher(dec).find()) {
-                                ru = dec
-                            }
-                        } catch (_: Exception) {}
-                    }
+                            } catch (_: Exception) {}
+                        }
 
-                    if (lc.isNotEmpty()) {
-                        session["prefix"] = lc
+                        if (lc.isNotEmpty()) {
+                            session["prefix"] = lc
+                        }
+                        if (lm != "----") {
+                            session["loco"] = lm
+                            session["loco_code"] = lk
+                        }
+                        if (validForEta && ru != "----" && ArrivalEstimator.isRouteValid(ru)) {
+                            session["route"] = ru
+                            session["route_valid"] = true
+                        }
+                        session["is_detailed"] = true
+                        session["timestamp"] = now
                     }
-                    if (lm != "----") {
-                        session["loco"] = lm
-                        session["loco_code"] = lk
-                    }
-                    if (validForEta && ru != "----" && ArrivalEstimator.isRouteValid(ru)) {
-                        session["route"] = ru
-                        session["route_valid"] = true
-                    }
-                    session["is_detailed"] = true
-                    session["timestamp"] = now
                 }
             }
         }
