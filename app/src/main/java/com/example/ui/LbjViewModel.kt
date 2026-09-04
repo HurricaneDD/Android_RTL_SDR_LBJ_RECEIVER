@@ -65,6 +65,7 @@ data class ReceiverState(
     val alertToneEnabled: Boolean = false,
     val alertNotificationEnabled: Boolean = false,
     val keepAliveEnabled: Boolean = false,
+    val keepScreenOn: Boolean = false,
     val showSimulationButton: Boolean = false,
     val ttsEngineMode: String = "auto",
     val enableExternalAutomation: Boolean = false,
@@ -108,6 +109,7 @@ class LbjViewModel(application: Application) : AndroidViewModel(application) {
             alertToneEnabled = prefs.alertToneEnabled,
             alertNotificationEnabled = prefs.alertNotificationEnabled,
             keepAliveEnabled = prefs.keepAliveEnabled,
+            keepScreenOn = prefs.keepScreenOn,
             showSimulationButton = prefs.showSimulationButton,
             ttsEngineMode = prefs.ttsEngineMode,
             enableExternalAutomation = prefs.enableExternalAutomation,
@@ -176,6 +178,10 @@ class LbjViewModel(application: Application) : AndroidViewModel(application) {
     private var activeTrainNo: String? = null
     private var lastValidTelemetryTime: Long = 0L
 
+    // Track last alert announcement time per train number for 2-minute repeated alert rule:
+    // Key: base train number (digits), Value: timestamp in epoch ms of last alert announcement
+    private val trainAlertHistory = java.util.concurrent.ConcurrentHashMap<String, Long>()
+
     init {
         // Refresh TTS audio cache stats
         refreshTtsCacheInfo()
@@ -204,15 +210,31 @@ class LbjViewModel(application: Application) : AndroidViewModel(application) {
                 if (isNewTrainSession) {
                     currentTrainSignalCount = 1
                     activeTrainNo = currentNo
+
+                    val baseNo = LocomotiveDict.extractBaseTrainNumber(currentNo)
+                    val isCompleteTrainNo = baseNo.isNotBlank() && currentNo != "----" && currentNo != "未知"
+                    val lastAlertTime = if (isCompleteTrainNo) trainAlertHistory[baseNo] else null
+
                     if (_receiverState.value.alertToneEnabled) {
-                        val speechText = SoundAlertManager.buildTrainAlertSpeechText(
-                            locoModel = telemetry.locoModel,
-                            route = telemetry.route,
-                            direction = telemetry.direction,
-                            speedKmH = telemetry.speed,
-                            trainNo = currentNo
-                        )
-                        soundAlertManager.playAlertAndSpeak(speechText, _receiverState.value.ttsEngineMode)
+                        if (isCompleteTrainNo && lastAlertTime != null && (now - lastAlertTime) <= 120_000L) {
+                            // 2分钟内再次收到同一完整有效车次报文：播报更新提示
+                            val updateSpeechText = SoundAlertManager.buildTrainUpdateSpeechText(currentNo)
+                            soundAlertManager.playAlertAndSpeak(updateSpeechText, _receiverState.value.ttsEngineMode)
+                        } else {
+                            // 首次收到或间隔超过2分钟：播报完整来车预警报文
+                            val speechText = SoundAlertManager.buildTrainAlertSpeechText(
+                                locoModel = telemetry.locoModel,
+                                route = telemetry.route,
+                                direction = telemetry.direction,
+                                speedKmH = telemetry.speed,
+                                trainNo = currentNo
+                            )
+                            soundAlertManager.playAlertAndSpeak(speechText, _receiverState.value.ttsEngineMode)
+                        }
+                    }
+
+                    if (isCompleteTrainNo) {
+                        trainAlertHistory[baseNo] = now
                     }
 
                     if (_receiverState.value.alertNotificationEnabled) {
@@ -230,9 +252,26 @@ class LbjViewModel(application: Application) : AndroidViewModel(application) {
                     if (currentNo.any { it.isLetter() } && activeTrainNo?.none { it.isLetter() } == true) {
                         activeTrainNo = currentNo
                     }
-                    if (currentTrainSignalCount % 4 == 0) {
+
+                    val baseNo = LocomotiveDict.extractBaseTrainNumber(currentNo)
+                    val isCompleteTrainNo = baseNo.isNotBlank() && currentNo != "----" && currentNo != "未知"
+                    val lastAlertTime = if (isCompleteTrainNo) trainAlertHistory[baseNo] else null
+
+                    if (isCompleteTrainNo && lastAlertTime != null && (now - lastAlertTime) <= 120_000L) {
+                        // 2分钟内第二次或多次收到同一车次号的报文
                         if (_receiverState.value.alertToneEnabled) {
-                            soundAlertManager.playDoubleBeep()
+                            val updateSpeechText = SoundAlertManager.buildTrainUpdateSpeechText(currentNo)
+                            soundAlertManager.playAlertAndSpeak(updateSpeechText, _receiverState.value.ttsEngineMode)
+                        }
+                        trainAlertHistory[baseNo] = now
+                    } else {
+                        if (isCompleteTrainNo) {
+                            trainAlertHistory[baseNo] = now
+                        }
+                        if (currentTrainSignalCount % 4 == 0) {
+                            if (_receiverState.value.alertToneEnabled) {
+                                soundAlertManager.playDoubleBeep()
+                            }
                         }
                     }
                 }
@@ -749,6 +788,11 @@ class LbjViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun setKeepScreenOn(enabled: Boolean) {
+        prefs.keepScreenOn = enabled
+        _receiverState.value = _receiverState.value.copy(keepScreenOn = enabled)
+    }
+
     fun setShowSimulationButton(enabled: Boolean) {
         prefs.showSimulationButton = enabled
         _receiverState.value = _receiverState.value.copy(showSimulationButton = enabled)
@@ -816,6 +860,7 @@ class LbjViewModel(application: Application) : AndroidViewModel(application) {
         setAlertToneEnabled(false)
         setAlertNotificationEnabled(false)
         setKeepAliveEnabled(false)
+        setKeepScreenOn(false)
         setShowSimulationButton(false)
         setTtsEngineMode("auto")
         setEnableExternalAutomation(false)

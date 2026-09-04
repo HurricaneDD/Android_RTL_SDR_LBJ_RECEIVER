@@ -208,6 +208,7 @@ fun MainScreen(viewModel: LbjViewModel) {
                 onToggleBasebandAudio = { viewModel.setBasebandAudioEnabled(it) },
                 onSetBasebandAudioVolume = { viewModel.setBasebandAudioVolume(it) },
                 onToggleKeepAlive = { viewModel.setKeepAliveEnabled(it) },
+                onToggleKeepScreenOn = { viewModel.setKeepScreenOn(it) },
                 onToggleSimulationButton = { viewModel.setShowSimulationButton(it) },
                 onSelectTtsEngineMode = { viewModel.setTtsEngineMode(it) },
                 onSelectThemeMode = { viewModel.setThemeMode(it) },

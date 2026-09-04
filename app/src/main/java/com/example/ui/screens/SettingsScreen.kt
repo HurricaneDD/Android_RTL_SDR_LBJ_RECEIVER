@@ -92,6 +92,7 @@ fun SettingsScreen(
     onToggleBasebandAudio: (Boolean) -> Unit = {},
     onSetBasebandAudioVolume: (Int) -> Unit = {},
     onToggleKeepAlive: (Boolean) -> Unit,
+    onToggleKeepScreenOn: (Boolean) -> Unit = {},
     onToggleSimulationButton: (Boolean) -> Unit,
     onSelectTtsEngineMode: (String) -> Unit = {},
     onSelectThemeMode: (String) -> Unit = {},
@@ -264,6 +265,13 @@ fun SettingsScreen(
             colors = CardDefaults.cardColors(containerColor = SurfaceCard)
         ) {
             Column {
+                SettingsSwitchItem(
+                    title = "保持唤醒屏幕",
+                    subtitle = "应用运行在前台期间保持屏幕常亮不熄灭",
+                    checked = state.keepScreenOn,
+                    onCheckedChange = onToggleKeepScreenOn
+                )
+
                 SettingsSwitchItem(
                     title = "后台常驻保活",
                     subtitle = "以常驻通知形式维持前台服务，锁屏或切后台时持续监听列车信号",

@@ -30,6 +30,7 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -60,6 +61,8 @@ import com.example.ui.theme.TextMuted
 import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.TextSecondary
 import com.example.ui.theme.TextSubtle
+import java.text.SimpleDateFormat
+import java.util.Date
 import java.util.Locale
 
 @Composable
@@ -72,6 +75,15 @@ fun LiveTelemetryCard(
     modifier: Modifier = Modifier
 ) {
     val isHit = telemetry.isHit
+    val hasTelegram = telemetry.timestamp > 0L && telemetry.trainNo != "----"
+    val fullDateTimeFormat = remember { SimpleDateFormat("yyyy/MM/dd HH:mm:ss", Locale.getDefault()) }
+    val receivedTimeStr = remember(telemetry.timestamp) {
+        if (telemetry.timestamp > 0L) {
+            fullDateTimeFormat.format(Date(telemetry.timestamp))
+        } else {
+            ""
+        }
+    }
     val borderColor = when {
         isHit -> AmberSignal
         telemetry.trainNo != "----" -> PrimaryBlue
@@ -101,10 +113,12 @@ fun LiveTelemetryCard(
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+                verticalAlignment = Alignment.Top
             ) {
                 // Left Column: Train Number & Category
-                Column {
+                Column(
+                    modifier = Modifier.weight(1f)
+                ) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
@@ -153,7 +167,9 @@ fun LiveTelemetryCard(
                     )
 
                     Spacer(modifier = Modifier.height(4.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
                         Box(
                             modifier = Modifier
                                 .background(PrimaryBlueSoft, RoundedCornerShape(4.dp))
@@ -183,8 +199,29 @@ fun LiveTelemetryCard(
                                 )
                             }
                         }
+
+                        if (hasTelegram && receivedTimeStr.isNotBlank()) {
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Box(
+                                modifier = Modifier
+                                    .background(SurfaceSecondary, RoundedCornerShape(4.dp))
+                                    .border(0.5.dp, BorderLight, RoundedCornerShape(4.dp))
+                                    .padding(horizontal = 6.dp, vertical = 2.5.dp)
+                                    .testTag("received_time_badge")
+                            ) {
+                                Text(
+                                    text = receivedTimeStr,
+                                    color = TextSecondary,
+                                    fontSize = 10.5.sp,
+                                    fontFamily = FontFamily.Monospace,
+                                    fontWeight = FontWeight.Medium
+                                )
+                            }
+                        }
                     }
                 }
+
+                Spacer(modifier = Modifier.width(12.dp))
 
                 // Right Column: Direction Badge
                 Box(

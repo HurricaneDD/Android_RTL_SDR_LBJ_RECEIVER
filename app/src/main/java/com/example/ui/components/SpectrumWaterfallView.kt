@@ -174,22 +174,23 @@ fun SpectrumWaterfallView(
                 // RSSI Y-Axis Scale labels on the left (-10dB to -70dB)
                 Column(
                     modifier = Modifier
-                        .height(86.dp)
-                        .padding(end = 4.dp),
+                        .width(28.dp)
+                        .height(88.dp)
+                        .padding(end = 5.dp, top = 2.dp, bottom = 2.dp),
                     verticalArrangement = Arrangement.SpaceBetween,
                     horizontalAlignment = Alignment.End
                 ) {
-                    Text("-10", color = TextMuted, fontSize = 8.5.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold)
-                    Text("-30", color = TextMuted, fontSize = 8.5.sp, fontFamily = FontFamily.Monospace)
-                    Text("-50", color = TextMuted, fontSize = 8.5.sp, fontFamily = FontFamily.Monospace)
-                    Text("-70", color = TextMuted, fontSize = 8.5.sp, fontFamily = FontFamily.Monospace)
+                    Text("-10", color = TextMuted, fontSize = 9.sp, lineHeight = 10.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold)
+                    Text("-30", color = TextMuted, fontSize = 9.sp, lineHeight = 10.sp, fontFamily = FontFamily.Monospace)
+                    Text("-50", color = TextMuted, fontSize = 9.sp, lineHeight = 10.sp, fontFamily = FontFamily.Monospace)
+                    Text("-70", color = TextMuted, fontSize = 9.sp, lineHeight = 10.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold)
                 }
 
                 // 32-band FFT Spectrum Canvas (Line Graph)
                 Canvas(
                     modifier = Modifier
                         .weight(1f)
-                        .height(86.dp)
+                        .height(88.dp)
                         .background(Color(0xFF0B1120), RoundedCornerShape(6.dp))
                         .border(1.dp, BorderMedium, RoundedCornerShape(6.dp))
                         .testTag("spectrum_canvas")
@@ -199,15 +200,26 @@ fun SpectrumWaterfallView(
                     val numPoints = spectrumBars.size
                     if (numPoints == 0) return@Canvas
 
-                    // Draw grid lines (-10dB, -30dB, -50dB, -70dB)
+                    val padY = 4f
+                    val usableHeight = canvasHeight - 2f * padY
+
+                    // Draw grid lines and left-side scale tick lines (-10dB, -30dB, -50dB, -70dB)
                     for (gDb in gridDbs) {
                         val normY = (1.0f - (gDb - minDb) / dbRange).coerceIn(0f, 1f)
-                        val yPos = normY * canvasHeight
+                        val yPos = padY + normY * usableHeight
+                        // Full horizontal grid line
                         drawLine(
                             color = Color(0x26FFFFFF),
                             start = Offset(0f, yPos),
                             end = Offset(canvasWidth, yPos),
                             strokeWidth = 1f
+                        )
+                        // Prominent tick mark at left edge
+                        drawLine(
+                            color = Color(0xB3FFFFFF),
+                            start = Offset(0f, yPos),
+                            end = Offset(8f, yPos),
+                            strokeWidth = 1.5f
                         )
                     }
 
@@ -227,7 +239,7 @@ fun SpectrumWaterfallView(
 
                     // Draw Squelch Threshold Line (Bright Rose Red / 亮玫红色)
                     val thresholdNormY = (1.0f - (csThresholdDb - minDb) / dbRange).coerceIn(0f, 1f)
-                    val thresholdY = thresholdNormY * canvasHeight
+                    val thresholdY = padY + thresholdNormY * usableHeight
                     drawLine(
                         color = Color(0xFFFF1493), // Bright Rose / 亮玫红
                         start = Offset(0f, thresholdY),
@@ -244,18 +256,18 @@ fun SpectrumWaterfallView(
                             val x = i * (canvasWidth / (numPoints - 1))
                             val db = spectrumBars[i].coerceIn(minDb, maxDb)
                             val normY = (1.0f - (db - minDb) / dbRange).coerceIn(0f, 1f)
-                            val y = normY * canvasHeight
+                            val y = padY + normY * usableHeight
 
                             if (i == 0) {
                                 linePath.moveTo(x, y)
-                                fillPath.moveTo(x, canvasHeight)
+                                fillPath.moveTo(x, padY + usableHeight)
                                 fillPath.lineTo(x, y)
                             } else {
                                 linePath.lineTo(x, y)
                                 fillPath.lineTo(x, y)
                             }
                         }
-                        fillPath.lineTo(canvasWidth, canvasHeight)
+                        fillPath.lineTo(canvasWidth, padY + usableHeight)
                         fillPath.close()
 
                         // Soft subtle green fill under the curve
@@ -283,7 +295,7 @@ fun SpectrumWaterfallView(
                 }
             }
 
-            Spacer(modifier = Modifier.height(4.dp))
+            Spacer(modifier = Modifier.height(6.dp))
 
             // Frequency Labels on Left, Center, Right aligned below the Canvas
             Row(

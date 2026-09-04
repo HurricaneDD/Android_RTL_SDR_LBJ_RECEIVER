@@ -293,15 +293,17 @@ class SoundAlertManager(
             val clean = locoModel.trim().replace("----", "")
             if (clean.isBlank() || clean == "未知") return "未知"
 
-            // Special Case: FXD1-J (复兴电1集)
-            val fxd1jRegex = Regex("""^FXD1[-_]?J[-_]?(.*)$""", RegexOption.IGNORE_CASE)
-            val fxd1jMatch = fxd1jRegex.matchEntire(clean)
-            if (fxd1jMatch != null) {
-                val numPart = fxd1jMatch.groupValues[1].trim()
+            // Special Case: FXD Series with -J (FXD1-J, FXD3-J: 复兴电1集 / 复兴电3集)
+            val fxdJRegex = Regex("""^FXD([0-9]+)[-_]?J[-_]?(.*)$""", RegexOption.IGNORE_CASE)
+            val fxdJMatch = fxdJRegex.matchEntire(clean)
+            if (fxdJMatch != null) {
+                val seriesNum = fxdJMatch.groupValues[1]
+                val numPart = fxdJMatch.groupValues[2].trim()
+                val prefix = "复兴电${seriesNum}集"
                 return if (numPart.isNotEmpty()) {
-                    "复兴电1集，${convertDigitsToSpoken(numPart)}"
+                    "$prefix，${convertDigitsToSpoken(numPart)}"
                 } else {
-                    "复兴电1集"
+                    prefix
                 }
             }
 
@@ -382,34 +384,41 @@ class SoundAlertManager(
         /**
          * Transforms train number according to railway pronunciation requirements:
          * G -> 高, D -> 动, C -> 城, S -> 市, Z -> 直, T -> 特, K -> 快, L -> 临, Y -> 游, X -> 行, DJ -> 动检
+         * Special handling for empty coaching stock / deadhead trains starting with '0' (车底回送/客回):
+         * e.g., "0T151" -> "零特一五一", "0K8396" -> "零快八三九六", "0Z123" -> "零直一二三", "0Gxx" -> "零高xx", "0Dxx" -> "零动xx"
          * The numerical portion (e.g. 5033, 102) is read digit-by-digit without spaces ("五零三三", "一零二").
          */
         fun formatTrainNoForSpeech(rawTrainNo: String): String {
             val clean = rawTrainNo.replace(" ", "").trim().replace("----", "")
             if (clean.isBlank()) return "未知车次"
 
+            // Check for '0' prefix (e.g., 0T151, 0K8396, 0Z15, 0G123, 0D701)
+            val hasLeadingZero = clean.startsWith("0") && clean.length > 1 && clean[1].isLetter()
+            val toParse = if (hasLeadingZero) clean.substring(1) else clean
+            val prefixLead = if (hasLeadingZero) "零" else ""
+
             val (prefixText, numPart) = when {
-                clean.startsWith("DJ", ignoreCase = true) -> "动检" to clean.substring(2)
-                clean.startsWith("CR", ignoreCase = true) -> "C R" to clean.substring(2)
-                clean.startsWith("G", ignoreCase = true) -> "高" to clean.substring(1)
-                clean.startsWith("D", ignoreCase = true) -> "动" to clean.substring(1)
-                clean.startsWith("C", ignoreCase = true) -> "城" to clean.substring(1)
-                clean.startsWith("S", ignoreCase = true) -> "市" to clean.substring(1)
-                clean.startsWith("Z", ignoreCase = true) -> "直" to clean.substring(1)
-                clean.startsWith("T", ignoreCase = true) -> "特" to clean.substring(1)
-                clean.startsWith("K", ignoreCase = true) -> "快" to clean.substring(1)
-                clean.startsWith("L", ignoreCase = true) -> "临" to clean.substring(1)
-                clean.startsWith("Y", ignoreCase = true) -> "游" to clean.substring(1)
-                clean.startsWith("X", ignoreCase = true) -> "行" to clean.substring(1)
-                clean.startsWith("F", ignoreCase = true) -> "返" to clean.substring(1)
-                else -> "" to clean
+                toParse.startsWith("DJ", ignoreCase = true) -> "动检" to toParse.substring(2)
+                toParse.startsWith("CR", ignoreCase = true) -> "C R" to toParse.substring(2)
+                toParse.startsWith("G", ignoreCase = true) -> "高" to toParse.substring(1)
+                toParse.startsWith("D", ignoreCase = true) -> "动" to toParse.substring(1)
+                toParse.startsWith("C", ignoreCase = true) -> "城" to toParse.substring(1)
+                toParse.startsWith("S", ignoreCase = true) -> "市" to toParse.substring(1)
+                toParse.startsWith("Z", ignoreCase = true) -> "直" to toParse.substring(1)
+                toParse.startsWith("T", ignoreCase = true) -> "特" to toParse.substring(1)
+                toParse.startsWith("K", ignoreCase = true) -> "快" to toParse.substring(1)
+                toParse.startsWith("L", ignoreCase = true) -> "临" to toParse.substring(1)
+                toParse.startsWith("Y", ignoreCase = true) -> "游" to toParse.substring(1)
+                toParse.startsWith("X", ignoreCase = true) -> "行" to toParse.substring(1)
+                toParse.startsWith("F", ignoreCase = true) -> "返" to toParse.substring(1)
+                else -> "" to toParse
             }
 
             val spokenDigits = convertDigitsToSpoken(numPart)
             return if (prefixText.isNotEmpty()) {
-                "$prefixText$spokenDigits"
+                "$prefixLead$prefixText$spokenDigits"
             } else {
-                spokenDigits
+                "$prefixLead$spokenDigits"
             }
         }
 
@@ -436,7 +445,7 @@ class SoundAlertManager(
 
         /**
          * Builds complete spoken alert announcement sentence:
-         * "有火车接近，机车为：xxx，xx线上/下行，速度：xx，车次：xxx"
+         * "有火车接近，机车为：xxx，xx线上/下行，速度：xx / 速度未知，车次：xxx"
          */
         fun buildTrainAlertSpeechText(
             locoModel: String,
@@ -447,12 +456,29 @@ class SoundAlertManager(
         ): String {
             val locoStr = formatLocoForSpeech(locoModel)
             val routeStr = formatRouteForSpeech(route, direction)
-            val speedParsed = speedKmH.replace("km/h", "", ignoreCase = true).replace("KM/H", "").trim().toDoubleOrNull()?.toInt()?.coerceAtLeast(0)
-            val speedStr = (speedParsed?.toString() ?: speedKmH.replace("km/h", "", ignoreCase = true).trim()).ifBlank { "0" }
-            val trainStr = formatTrainNoForSpeech(trainNo)
+            
+            // Handle unknown or missing speed
+            val rawSpeed = speedKmH.replace("km/h", "", ignoreCase = true).replace("KM/H", "").trim()
+            val speedClause = if (rawSpeed.isBlank() || rawSpeed == "---" || rawSpeed == "----" || rawSpeed == "未知") {
+                "速度未知"
+            } else {
+                val speedParsed = rawSpeed.toDoubleOrNull()?.toInt()?.coerceAtLeast(0)
+                val speedVal = speedParsed?.toString() ?: rawSpeed
+                "速度：$speedVal"
+            }
 
+            val trainStr = formatTrainNoForSpeech(trainNo)
             val routeClause = if (routeStr.isNotBlank()) "，$routeStr" else ""
-            return "有火车接近，机车为：$locoStr$routeClause，速度：$speedStr，车次：$trainStr"
+            return "有火车接近，机车为：$locoStr$routeClause，$speedClause，车次：$trainStr"
+        }
+
+        /**
+         * Builds train telemetry update announcement sentence:
+         * "接收到xxxx（车次）的更新数据"
+         */
+        fun buildTrainUpdateSpeechText(trainNo: String): String {
+            val trainStr = formatTrainNoForSpeech(trainNo)
+            return "接收到${trainStr}的更新数据"
         }
     }
 }

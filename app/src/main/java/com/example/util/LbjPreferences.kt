@@ -28,7 +28,12 @@ class LbjPreferences(context: Context) {
         private const val KEY_THEME_MODE = "pref_theme_mode"
         private const val KEY_BASEBAND_AUDIO_ENABLED = "pref_baseband_audio_enabled"
         private const val KEY_BASEBAND_AUDIO_VOLUME = "pref_baseband_audio_volume"
+        private const val KEY_KEEP_SCREEN_ON = "pref_keep_screen_on"
     }
+
+    var keepScreenOn: Boolean
+        get() = prefs.getBoolean(KEY_KEEP_SCREEN_ON, false)
+        set(value) = prefs.edit().putBoolean(KEY_KEEP_SCREEN_ON, value).apply()
 
     var basebandAudioVolume: Int
         get() = prefs.getInt(KEY_BASEBAND_AUDIO_VOLUME, 50).coerceIn(0, 100)
