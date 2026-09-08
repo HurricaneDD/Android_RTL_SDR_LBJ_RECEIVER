@@ -40,7 +40,7 @@ class LbjPreferences(context: Context) {
         set(value) = prefs.edit().putInt(KEY_BASEBAND_AUDIO_VOLUME, value.coerceIn(0, 100)).apply()
 
     var basebandAudioEnabled: Boolean
-        get() = prefs.getBoolean(KEY_BASEBAND_AUDIO_ENABLED, false)
+        get() = prefs.getBoolean(KEY_BASEBAND_AUDIO_ENABLED, true)
         set(value) = prefs.edit().putBoolean(KEY_BASEBAND_AUDIO_ENABLED, value).apply()
 
     var themeMode: String

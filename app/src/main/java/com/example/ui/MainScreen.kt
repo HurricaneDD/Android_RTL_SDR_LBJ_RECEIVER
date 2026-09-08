@@ -190,6 +190,7 @@ fun MainScreen(viewModel: LbjViewModel) {
                     showRouteKmDialog = true
                 },
                 onDeleteRoute = { route -> viewModel.deleteRouteStationKm(route) },
+                onImportRoutes = { routes -> viewModel.importRouteStationKms(routes) },
                 modifier = screenModifier
             )
             3 -> SettingsScreen(

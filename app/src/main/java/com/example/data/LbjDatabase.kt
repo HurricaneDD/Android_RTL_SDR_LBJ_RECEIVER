@@ -61,6 +61,9 @@ interface LbjDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertRouteStationKm(entity: RouteStationKmEntity)
 
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertRouteStationKms(entities: List<RouteStationKmEntity>)
+
     @Query("SELECT * FROM route_station_kms ORDER BY updatedTimestamp DESC")
     fun getAllRouteStationKms(): Flow<List<RouteStationKmEntity>>
 

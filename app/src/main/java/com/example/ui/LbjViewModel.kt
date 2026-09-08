@@ -70,7 +70,7 @@ data class ReceiverState(
     val ttsEngineMode: String = "auto",
     val enableExternalAutomation: Boolean = false,
     val themeMode: String = "system",
-    val basebandAudioEnabled: Boolean = false,
+    val basebandAudioEnabled: Boolean = true,
     val basebandAudioVolume: Int = 50,
     val ttsCacheCount: Int = 0,
     val ttsCacheBytes: Long = 0L,
@@ -881,6 +881,17 @@ class LbjViewModel(application: Application) : AndroidViewModel(application) {
                     updatedTimestamp = System.currentTimeMillis()
                 )
             )
+        }
+    }
+
+    fun importRouteStationKms(routes: List<RouteStationKmEntity>) {
+        if (routes.isEmpty()) return
+        routes.forEach {
+            arrivalEstimator.setRouteKm(it.routeName, it.stationKm)
+        }
+        recomputeEta()
+        viewModelScope.launch(Dispatchers.IO) {
+            dao.insertRouteStationKms(routes)
         }
     }
 
