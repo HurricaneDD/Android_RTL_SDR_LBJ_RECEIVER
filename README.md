@@ -1,8 +1,18 @@
 # Android_RTL_SDR_LBJ_RECEIVER
-## 简介和下载地址
+## 简介
 安卓 LBJ (800米列车防护报警系统) 信号接收和解析APP，需要手机通过OTG连接RTL2832U-FC1003接收器，支持设置本站位置，估算到达时间，记录历史车次。
 
+## 软件下载
+下载本软件：
 [<img alt="Get it on GitHub" src="media/github.png" width="200px">](https://github.com/HurricaneDD/Android_RTL_SDR_LBJ_RECEIVER/releases)
+
+手机端需要安装 Android 版 RTL-SDR 驱动，才能正常使用本软件。
+驱动程序下载：
+
+- [RTL-SDR Driver / SDR Driver（Google Play）](https://play.google.com/store/apps/details?id=marto.rtl_tcp_andro)
+- [RTL-SDR Driver（F-Droid）](https://f-droid.org/en/packages/marto.rtl_tcp_andro/)
+- [Android RTL-SDR Driver 源码](https://github.com/signalwareltd/rtl_tcp_andro-)
+
 ## 致谢和免责
 **本项目参考了 [Sdr-Is-Fun RTL_SDR_LBJ_RECEIVER](https://github.com/Sdr-Is-Fun/RTL_SDR_LBJ_RECEIVER/tree/main)**，使用Google Gemini 模型进行开发。
 
