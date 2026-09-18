@@ -4,6 +4,7 @@
 
 ## 软件下载
 下载本软件：
+
 [<img alt="Get it on GitHub" src="media/github.png" width="200px">](https://github.com/HurricaneDD/Android_RTL_SDR_LBJ_RECEIVER/releases)
 
 手机端需要安装 Android 版 RTL-SDR 驱动，才能正常使用本软件。
