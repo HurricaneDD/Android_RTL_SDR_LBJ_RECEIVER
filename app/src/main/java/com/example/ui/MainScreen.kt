@@ -12,6 +12,7 @@ import androidx.compose.material.icons.automirrored.filled.AltRoute
 import androidx.compose.material.icons.filled.Dashboard
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Terminal
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
@@ -35,7 +36,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.ui.components.CsThresholdDialog
+import com.example.ui.components.DriverInstallGuideDialog
 import com.example.ui.components.FftExplanationDialog
+import com.example.ui.components.FirstLaunchDriverPromptDialog
 import com.example.ui.components.FrequencyDialog
 import com.example.ui.components.GainDialog
 import com.example.ui.components.PpmDialog
@@ -45,6 +48,7 @@ import com.example.ui.components.TrainTypeRuleDialog
 import com.example.ui.components.WatchlistDialog
 import com.example.ui.screens.DashboardScreen
 import com.example.ui.screens.HistoryScreen
+import com.example.ui.screens.PacketLogScreen
 import com.example.ui.screens.RoutesScreen
 import com.example.ui.screens.SettingsScreen
 import com.example.ui.theme.BackgroundLight
@@ -65,8 +69,12 @@ fun MainScreen(viewModel: LbjViewModel) {
     val liveEta by viewModel.liveEta.collectAsState()
     val historyRecords by viewModel.historyRecords.collectAsState()
     val savedRoutes by viewModel.savedRouteKms.collectAsState()
+    val packetLogs by viewModel.packetLogs.collectAsState()
 
     var selectedTab by remember { mutableIntStateOf(0) }
+    if (!receiverState.showPacketLogTab && selectedTab == 4) {
+        selectedTab = 0
+    }
 
     // Dialog state controllers
     var showFreqDialog by remember { mutableStateOf(false) }
@@ -146,6 +154,17 @@ fun MainScreen(viewModel: LbjViewModel) {
                     colors = navItemColors,
                     modifier = Modifier.testTag("tab_settings")
                 )
+
+                if (receiverState.showPacketLogTab) {
+                    NavigationBarItem(
+                        selected = (selectedTab == 4),
+                        onClick = { selectedTab = 4 },
+                        icon = { Icon(Icons.Default.Terminal, contentDescription = "报文日志") },
+                        label = { Text("报文日志", fontSize = 11.sp, fontWeight = if (selectedTab == 4) FontWeight.Bold else FontWeight.Normal) },
+                        colors = navItemColors,
+                        modifier = Modifier.testTag("tab_packet_logs")
+                    )
+                }
             }
         },
         containerColor = BackgroundLight
@@ -173,6 +192,9 @@ fun MainScreen(viewModel: LbjViewModel) {
                 onToggleAlertTone = { viewModel.setAlertToneEnabled(it) },
                 onToggleAlertNotification = { viewModel.setAlertNotificationEnabled(it) },
                 onToggleBasebandAudio = { viewModel.setBasebandAudioEnabled(it) },
+                onDismissWarning = { viewModel.clearWarning() },
+                packetLogs = packetLogs,
+                onNavigateToPacketLogs = { selectedTab = 4 },
                 modifier = screenModifier
             )
             1 -> HistoryScreen(
@@ -211,14 +233,20 @@ fun MainScreen(viewModel: LbjViewModel) {
                 onToggleKeepAlive = { viewModel.setKeepAliveEnabled(it) },
                 onToggleKeepScreenOn = { viewModel.setKeepScreenOn(it) },
                 onToggleSimulationButton = { viewModel.setShowSimulationButton(it) },
+                onTogglePacketLogTab = { viewModel.setShowPacketLogTab(it) },
                 onSelectTtsEngineMode = { viewModel.setTtsEngineMode(it) },
                 onSelectThemeMode = { viewModel.setThemeMode(it) },
                 onClearTtsCache = { viewModel.clearTtsCache() },
                 onToggleEnableExternalAutomation = { viewModel.setEnableExternalAutomation(it) },
                 onResetAllSettings = { viewModel.resetAllSettings() },
                 onLaunchDriver = { viewModel.launchAndroidDriver() },
+                onInstallDriver = { viewModel.openDriverInstallGuide() },
                 onTestVoiceBroadcast = { viewModel.testVoiceBroadcast() },
                 modifier = screenModifier
+            )
+            4 -> PacketLogScreen(
+                packetLogs = packetLogs,
+                onClearLogs = { viewModel.clearPacketLogs() }
             )
         }
     }
@@ -310,6 +338,21 @@ fun MainScreen(viewModel: LbjViewModel) {
             onOpenDriverSettings = {
                 viewModel.openDriverAppSettings()
             }
+        )
+    }
+
+    if (receiverState.showFirstLaunchDriverPrompt) {
+        FirstLaunchDriverPromptDialog(
+            onConfirmAlreadyInstalled = { viewModel.onUserConfirmDriverAlreadyInstalled() },
+            onSelectNotInstalled = { viewModel.onUserSelectDriverNotInstalled() },
+            onDismiss = { viewModel.dismissFirstLaunchDriverPrompt() }
+        )
+    }
+
+    if (receiverState.showDriverInstallGuideDialog) {
+        DriverInstallGuideDialog(
+            onInstall = { viewModel.installDriverApk() },
+            onDismiss = { viewModel.dismissDriverInstallGuide() }
         )
     }
 }

@@ -141,6 +141,30 @@ class SoundAlertManager(
     }
 
     /**
+     * Checks whether system TTS or online TTS audio playback is currently speaking.
+     */
+    fun isSpeaking(): Boolean {
+        return (tts?.isSpeaking == true) || networkTts.isPlaying()
+    }
+
+    /**
+     * Plays a non-blocking subtle double beep ("滴滴") without canceling any ongoing TTS speech.
+     */
+    fun playSubtlePeriodicBeep() {
+        if (isSpeaking()) return
+        scope.launch(Dispatchers.IO) {
+            try {
+                val tg = ToneGenerator(AudioManager.STREAM_MUSIC, 80)
+                tg.startTone(ToneGenerator.TONE_PROP_BEEP, 60)
+                delay(100)
+                tg.startTone(ToneGenerator.TONE_PROP_BEEP, 60)
+                delay(100)
+                tg.release()
+            } catch (_: Exception) {}
+        }
+    }
+
+    /**
      * Plays two short beeps ("滴滴") safely.
      */
     fun playDoubleBeep(onComplete: (() -> Unit)? = null) {
@@ -219,23 +243,12 @@ class SoundAlertManager(
     private fun speakViaSystemTts(text: String): Boolean {
         return try {
             val utteranceId = "train_alert_${System.currentTimeMillis()}"
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-                val params = Bundle().apply {
-                    putInt(TextToSpeech.Engine.KEY_PARAM_STREAM, AudioManager.STREAM_MUSIC)
-                    putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME, 1.0f)
-                }
-                val res = tts?.speak(text, TextToSpeech.QUEUE_FLUSH, params, utteranceId)
-                res == TextToSpeech.SUCCESS
-            } else {
-                @Suppress("DEPRECATION")
-                val params = HashMap<String, String>().apply {
-                    put(TextToSpeech.Engine.KEY_PARAM_STREAM, AudioManager.STREAM_MUSIC.toString())
-                    put(TextToSpeech.Engine.KEY_PARAM_UTTERANCE_ID, utteranceId)
-                }
-                @Suppress("DEPRECATION")
-                val res = tts?.speak(text, TextToSpeech.QUEUE_FLUSH, params)
-                res == TextToSpeech.SUCCESS
+            val params = Bundle().apply {
+                putInt(TextToSpeech.Engine.KEY_PARAM_STREAM, AudioManager.STREAM_MUSIC)
+                putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME, 1.0f)
             }
+            val res = tts?.speak(text, TextToSpeech.QUEUE_FLUSH, params, utteranceId)
+            res == TextToSpeech.SUCCESS
         } catch (_: Exception) {
             false
         }

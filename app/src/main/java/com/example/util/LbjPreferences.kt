@@ -2,6 +2,7 @@ package com.example.util
 
 import android.content.Context
 import android.content.SharedPreferences
+import androidx.core.content.edit
 import com.example.dsp.DspConstants
 
 class LbjPreferences(context: Context) {
@@ -29,59 +30,69 @@ class LbjPreferences(context: Context) {
         private const val KEY_BASEBAND_AUDIO_ENABLED = "pref_baseband_audio_enabled"
         private const val KEY_BASEBAND_AUDIO_VOLUME = "pref_baseband_audio_volume"
         private const val KEY_KEEP_SCREEN_ON = "pref_keep_screen_on"
+        private const val KEY_SHOW_PACKET_LOG_TAB = "pref_show_packet_log_tab"
+        private const val KEY_HAS_PROMPTED_DRIVER_INSTALL = "pref_has_prompted_driver_install"
     }
+
+    var hasPromptedDriverInstall: Boolean
+        get() = prefs.getBoolean(KEY_HAS_PROMPTED_DRIVER_INSTALL, false)
+        set(value) = prefs.edit { putBoolean(KEY_HAS_PROMPTED_DRIVER_INSTALL, value) }
 
     var keepScreenOn: Boolean
         get() = prefs.getBoolean(KEY_KEEP_SCREEN_ON, false)
-        set(value) = prefs.edit().putBoolean(KEY_KEEP_SCREEN_ON, value).apply()
+        set(value) = prefs.edit { putBoolean(KEY_KEEP_SCREEN_ON, value) }
 
     var basebandAudioVolume: Int
         get() = prefs.getInt(KEY_BASEBAND_AUDIO_VOLUME, 50).coerceIn(0, 100)
-        set(value) = prefs.edit().putInt(KEY_BASEBAND_AUDIO_VOLUME, value.coerceIn(0, 100)).apply()
+        set(value) = prefs.edit { putInt(KEY_BASEBAND_AUDIO_VOLUME, value.coerceIn(0, 100)) }
 
     var basebandAudioEnabled: Boolean
         get() = prefs.getBoolean(KEY_BASEBAND_AUDIO_ENABLED, true)
-        set(value) = prefs.edit().putBoolean(KEY_BASEBAND_AUDIO_ENABLED, value).apply()
+        set(value) = prefs.edit { putBoolean(KEY_BASEBAND_AUDIO_ENABLED, value) }
 
     var themeMode: String
         get() = prefs.getString(KEY_THEME_MODE, "system") ?: "system"
-        set(value) = prefs.edit().putString(KEY_THEME_MODE, value).apply()
+        set(value) = prefs.edit { putString(KEY_THEME_MODE, value) }
 
     var alertNotificationEnabled: Boolean
         get() = prefs.getBoolean(KEY_ALERT_NOTIFICATION, false)
-        set(value) = prefs.edit().putBoolean(KEY_ALERT_NOTIFICATION, value).apply()
+        set(value) = prefs.edit { putBoolean(KEY_ALERT_NOTIFICATION, value) }
 
     var ttsEngineMode: String
         get() = prefs.getString(KEY_TTS_ENGINE_MODE, "auto") ?: "auto"
-        set(value) = prefs.edit().putString(KEY_TTS_ENGINE_MODE, value).apply()
+        set(value) = prefs.edit { putString(KEY_TTS_ENGINE_MODE, value) }
 
     var enableExternalAutomation: Boolean
         get() = prefs.getBoolean(KEY_ENABLE_EXTERNAL_AUTOMATION, false)
-        set(value) = prefs.edit().putBoolean(KEY_ENABLE_EXTERNAL_AUTOMATION, value).apply()
+        set(value) = prefs.edit { putBoolean(KEY_ENABLE_EXTERNAL_AUTOMATION, value) }
 
     var alertToneEnabled: Boolean
-        get() = prefs.getBoolean(KEY_ALERT_TONE, false)
-        set(value) = prefs.edit().putBoolean(KEY_ALERT_TONE, value).apply()
+        get() = prefs.getBoolean(KEY_ALERT_TONE, true)
+        set(value) = prefs.edit { putBoolean(KEY_ALERT_TONE, value) }
+
+    var showPacketLogTab: Boolean
+        get() = prefs.getBoolean(KEY_SHOW_PACKET_LOG_TAB, false)
+        set(value) = prefs.edit { putBoolean(KEY_SHOW_PACKET_LOG_TAB, value) }
 
     var keepAliveEnabled: Boolean
         get() = prefs.getBoolean(KEY_KEEP_ALIVE, false)
-        set(value) = prefs.edit().putBoolean(KEY_KEEP_ALIVE, value).apply()
+        set(value) = prefs.edit { putBoolean(KEY_KEEP_ALIVE, value) }
 
     var broadcastAlerts: Boolean
         get() = prefs.getBoolean(KEY_BROADCAST_ALERTS, false)
-        set(value) = prefs.edit().putBoolean(KEY_BROADCAST_ALERTS, value).apply()
+        set(value) = prefs.edit { putBoolean(KEY_BROADCAST_ALERTS, value) }
 
     var strictFilter: Boolean
         get() = prefs.getBoolean(KEY_STRICT_FILTER, true)
-        set(value) = prefs.edit().putBoolean(KEY_STRICT_FILTER, value).apply()
+        set(value) = prefs.edit { putBoolean(KEY_STRICT_FILTER, value) }
 
     var showErrWarn: Boolean
         get() = prefs.getBoolean(KEY_SHOW_ERR_WARN, true)
-        set(value) = prefs.edit().putBoolean(KEY_SHOW_ERR_WARN, value).apply()
+        set(value) = prefs.edit { putBoolean(KEY_SHOW_ERR_WARN, value) }
 
     var filterMode: String
         get() = prefs.getString(KEY_FILTER_MODE, "highlight") ?: "highlight"
-        set(value) = prefs.edit().putString(KEY_FILTER_MODE, value).apply()
+        set(value) = prefs.edit { putString(KEY_FILTER_MODE, value) }
 
     var keywords: List<String>
         get() {
@@ -90,32 +101,32 @@ class LbjPreferences(context: Context) {
         }
         set(value) {
             val raw = value.joinToString(",")
-            prefs.edit().putString(KEY_KEYWORDS, raw).apply()
+            prefs.edit { putString(KEY_KEYWORDS, raw) }
         }
 
     var freqHz: Double
         get() = java.lang.Double.longBitsToDouble(
             prefs.getLong(KEY_FREQ_HZ, java.lang.Double.doubleToRawLongBits(DspConstants.DEFAULT_FREQ_HZ))
         )
-        set(value) = prefs.edit().putLong(KEY_FREQ_HZ, java.lang.Double.doubleToRawLongBits(value)).apply()
+        set(value) = prefs.edit { putLong(KEY_FREQ_HZ, java.lang.Double.doubleToRawLongBits(value)) }
 
     var gainDb: Float
         get() = prefs.getFloat(KEY_GAIN_DB, DspConstants.HW_GAIN_DB)
-        set(value) = prefs.edit().putFloat(KEY_GAIN_DB, value).apply()
+        set(value) = prefs.edit { putFloat(KEY_GAIN_DB, value) }
 
     var ppm: Int
         get() = prefs.getInt(KEY_PPM, DspConstants.PPM)
-        set(value) = prefs.edit().putInt(KEY_PPM, value).apply()
+        set(value) = prefs.edit { putInt(KEY_PPM, value) }
 
     var csThresholdDb: Float
         get() = prefs.getFloat(KEY_CS_THRESHOLD_DB, DspConstants.DEFAULT_RSSI_THRESHOLD_DB)
-        set(value) = prefs.edit().putFloat(KEY_CS_THRESHOLD_DB, value).apply()
+        set(value) = prefs.edit { putFloat(KEY_CS_THRESHOLD_DB, value) }
 
     var showSimulationButton: Boolean
         get() = prefs.getBoolean(KEY_SHOW_SIMULATION_BTN, false)
-        set(value) = prefs.edit().putBoolean(KEY_SHOW_SIMULATION_BTN, value).apply()
+        set(value) = prefs.edit { putBoolean(KEY_SHOW_SIMULATION_BTN, value) }
 
     fun resetAll() {
-        prefs.edit().clear().apply()
+        prefs.edit { clear() }
     }
 }

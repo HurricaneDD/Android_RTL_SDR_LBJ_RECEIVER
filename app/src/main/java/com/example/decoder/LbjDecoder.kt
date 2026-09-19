@@ -14,7 +14,8 @@ class LbjDecoder(
     var onTelemetryUpdated: ((TrainTelemetry, EtaInfo) -> Unit)? = null,
     var onWarning: ((String) -> Unit)? = null,
     var onWarningCleared: (() -> Unit)? = null,
-    var onRawPacket: ((String) -> Unit)? = null
+    var onRawPacket: ((String) -> Unit)? = null,
+    var onPacketLog: ((String) -> Unit)? = null
 ) {
     private val bitSlicer = BitSlicer()
 
@@ -37,6 +38,13 @@ class LbjDecoder(
 
     private var currentTelemetry = TrainTelemetry()
     private var currentEta = EtaInfo()
+
+    fun clearCurrentTrain() {
+        currentTelemetry = TrainTelemetry()
+        currentEta = EtaInfo()
+        lastTrain = null
+        sessions.clear()
+    }
 
     fun resetDpllSoft() {
         bitSlicer.resetDpllSoft()
@@ -140,16 +148,31 @@ class LbjDecoder(
     private fun triggerLbjParse() {
         inMessage = false
         if (currentMsgCws.isNotEmpty()) {
+            val bcd = extractBcd(currentMsgCws)
+            val addr = currentAddr
+            val func = currentFunc
+            val hasError = currentMsgHasError
+
             if (currentMsgHasError) {
                 if (showErrWarn) {
                     emitWarning(currentFunc)
                 }
                 // When BCH error is present, data bits may have flipped.
                 // Do NOT allow creating any new train session from corrupted packets to prevent ghost train creation.
-                val bcd = extractBcd(currentMsgCws)
                 val raw = if (bcd.length >= 6) bcd.substring(0, 6).trim() else ""
-                val existingSession = sessions[raw] ?: lastTrain?.let { sessions[it] }
+                val normRaw = if (raw.isNotEmpty()) LocomotiveDict.normalizeTrainNo(raw) else ""
+                val isDetailedAddr = (currentAddr in listOf(1234001L, 1234002L))
+                val existingSession = if (isDetailedAddr) {
+                    lastTrain?.let { sessions[it] }
+                } else {
+                    sessions[normRaw] ?: sessions[raw] ?: lastTrain?.let { lt ->
+                        if (normRaw.isNotEmpty() && LocomotiveDict.isSameTrain(lt, normRaw)) sessions[lt] else null
+                    }
+                }
                 if (existingSession == null) {
+                    // Log packet even if session was dropped due to corruption
+                    val logContent = buildPacketLog(bcd, addr, func, hasError = true, telemetry = null)
+                    onPacketLog?.invoke(logContent)
                     currentMsgCws.clear()
                     currentMsgHasError = false
                     return
@@ -159,12 +182,72 @@ class LbjDecoder(
             if (validForEta) {
                 onWarningCleared?.invoke()
             }
-            val bcd = extractBcd(currentMsgCws)
             onRawPacket?.invoke(bcd)
-            decodeLbj(bcd, validForEta = validForEta)
+            val parsedTelemetry = decodeLbj(bcd, validForEta = validForEta)
+            val logContent = buildPacketLog(bcd, addr, func, hasError = hasError, telemetry = parsedTelemetry)
+            onPacketLog?.invoke(logContent)
+
             currentMsgCws.clear()
             currentMsgHasError = false
         }
+    }
+
+    private fun buildPacketLog(
+        bcd: String,
+        addr: Long,
+        func: Int,
+        hasError: Boolean,
+        telemetry: TrainTelemetry?
+    ): String {
+        val dirStr = when (func) {
+            1 -> "下行"
+            3 -> "上行"
+            0 -> "尾部/状态"
+            else -> "未知($func)"
+        }
+        val sb = StringBuilder()
+        if (telemetry != null && telemetry.trainNo != "----" && telemetry.trainNo.isNotBlank()) {
+            sb.append("车次: ").append(telemetry.trainNo)
+            val d = if (telemetry.direction != "未知" && !telemetry.direction.startsWith("未知")) telemetry.direction else dirStr
+            sb.append("  方向: ").append(d)
+            if (telemetry.speed != "---") {
+                sb.append("  速度: ").append(telemetry.speed).append(" km/h")
+            }
+            if (telemetry.positionKm != "---.-") {
+                sb.append("  公里标: K").append(telemetry.positionKm)
+            }
+            val hasLoco = telemetry.locoModel != "----" && telemetry.locoModel.isNotBlank()
+            val hasRoute = telemetry.route != "----" && telemetry.route.isNotBlank()
+            if (hasLoco) {
+                sb.append("\n机车: ").append(telemetry.locoModel)
+            }
+            if (hasRoute) {
+                if (hasLoco) {
+                    sb.append("  线路: ").append(telemetry.route)
+                } else {
+                    sb.append("\n线路: ").append(telemetry.route)
+                }
+            }
+            if (hasError) {
+                sb.append(" (BCH校验异常)")
+            }
+            sb.append("\n原始码流: ").append(bcd)
+        } else {
+            if (addr == 1234008L) {
+                sb.append("[列车尾部信令] 地址: 1234008\n原始码流: ").append(bcd)
+            } else {
+                val candidateTrain = if (bcd.length >= 6) bcd.substring(0, minOf(6, bcd.length)).trim() else ""
+                val errTag = if (hasError) "[BCH校验异常] " else ""
+                if (candidateTrain.isNotEmpty() && candidateTrain.any { it.isLetterOrDigit() }) {
+                    sb.append(errTag).append("候选车次: ").append(candidateTrain).append("  方向: ").append(dirStr)
+                    sb.append("\n原始码流: ").append(bcd)
+                } else {
+                    sb.append(errTag).append("地址: ").append(addr).append("  方向: ").append(dirStr)
+                    sb.append("\n原始码流: ").append(bcd)
+                }
+            }
+        }
+        return sb.toString()
     }
 
     private fun emitWarning(func: Int) {
@@ -172,7 +255,7 @@ class LbjDecoder(
         if (now - lastWarnTime < 4000) return
         lastWarnTime = now
         val d = if (func == 1) "下行" else if (func == 3) "上行" else "未知"
-        val warnMsg = "⚠ 探测到 $d 信号 干扰严重 (BCH校验错误)"
+        val warnMsg = "探测到 $d 信号 干扰严重 (BCH校验错误)"
         onWarning?.invoke(warnMsg)
     }
 
@@ -222,13 +305,13 @@ class LbjDecoder(
         return data
     }
 
-    fun decodeLbj(bcd: String, validForEta: Boolean = true) {
+    fun decodeLbj(bcd: String, validForEta: Boolean = true): TrainTelemetry? {
         val addr = currentAddr
         val func = currentFunc
         val now = System.currentTimeMillis()
 
         if (addr == 1234008L || (addr in listOf(1233999L, 1234000L) && func == 0 && bcd.length == 5 && bcd.firstOrNull() in listOf('-', '*') && bcd.getOrNull(4) != '-')) {
-            return
+            return null
         }
 
         val isShort = (addr == 1233999L || addr == 1234000L) && bcd.length >= 15
@@ -239,12 +322,19 @@ class LbjDecoder(
 
         if (isShort) {
             val raw = if (bcd.length >= 6) bcd.substring(0, 6).trim() else ""
-            baseTrain = if (strictFilter) {
+            val parsed = if (strictFilter) {
                 if (Pattern.matches("^[A-Za-z0-9]+$", raw)) raw else "----"
             } else {
                 if (!raw.contains('*') && !raw.contains('-')) raw else "----"
             }
-            lastTrain = baseTrain
+            val normParsed = if (parsed != "----") LocomotiveDict.normalizeTrainNo(parsed) else "----"
+            if (!validForEta && lastTrain != null && normParsed != "----" && !LocomotiveDict.isSameTrain(lastTrain!!, normParsed)) {
+                return null
+            }
+            baseTrain = if (normParsed != "----") normParsed else (if (!validForEta && lastTrain != null) lastTrain!! else "----")
+            if (baseTrain != "----") {
+                lastTrain = baseTrain
+            }
 
             val direction = when (func) {
                 1 -> "下行"
@@ -264,7 +354,7 @@ class LbjDecoder(
                 if (ps.all { it.isDigit() }) "${ps.substring(0, 4)}.${ps[4]}" else "---.-"
             }
 
-            val session = sessions.getOrPut(baseTrain) {
+            val session = sessions.getOrPut(baseTrain!!) {
                 mutableMapOf(
                     "base_train" to baseTrain,
                     "prefix" to "",
@@ -292,7 +382,19 @@ class LbjDecoder(
         }
 
         if (isMerged || isStandalone) {
-            val tid = if (isMerged) baseTrain else lastTrain
+            var tid = if (isMerged) baseTrain else lastTrain
+            if (tid == null || !sessions.containsKey(tid)) {
+                // Fallback: lookup session with matching numeric train number
+                val targetNum = (tid ?: lastTrain)?.let { LocomotiveDict.extractBaseTrainNumber(it) }
+                if (!targetNum.isNullOrEmpty()) {
+                    val matchedKey = sessions.keys.firstOrNull { key ->
+                        LocomotiveDict.isSameTrain(key, targetNum)
+                    }
+                    if (matchedKey != null) {
+                        tid = matchedKey
+                    }
+                }
+            }
             if (tid != null && sessions.containsKey(tid)) {
                 val session = sessions[tid]!!
                 val lastTs = (session["timestamp"] as? Long) ?: 0L
@@ -331,7 +433,7 @@ class LbjDecoder(
                         val lr = if (buf.length >= 12) buf.substring(4, 12) else ""
                         var lm = "----"
                         var lk = "---"
-                        if (isPrefixValid && lr.length >= 8) {
+                        if (lr.length >= 8) {
                             val cp = lr.substring(0, 3)
                             val np = lr.substring(3).trim()
                             if (cp.all { it.isDigit() }) {
@@ -387,12 +489,23 @@ class LbjDecoder(
             }
         }
 
-        val aid = if (isShort) baseTrain else lastTrain
+        var aid = if (isShort) baseTrain else lastTrain
+        if (aid == null || !sessions.containsKey(aid)) {
+            val targetNum = (aid ?: lastTrain)?.let { LocomotiveDict.extractBaseTrainNumber(it) }
+            if (!targetNum.isNullOrEmpty()) {
+                val matchedKey = sessions.keys.firstOrNull { key ->
+                    LocomotiveDict.isSameTrain(key, targetNum)
+                }
+                if (matchedKey != null) {
+                    aid = matchedKey
+                }
+            }
+        }
         if (aid != null && sessions.containsKey(aid)) {
             val s = sessions[aid]!!
             val prefix = (s["prefix"] as? String) ?: ""
             val bTrain = (s["base_train"] as? String) ?: ""
-            val fullTrain = "$prefix$bTrain".replace(" ", "").trim()
+            val fullTrain = LocomotiveDict.normalizeTrainNo("$prefix$bTrain")
 
             val dir = (s["direction"] as? String) ?: "未知"
             val spd = (s["speed"] as? String) ?: "---"
@@ -406,24 +519,26 @@ class LbjDecoder(
 
             val isHit = checkWatchlistHit(fullTrain, loco)
 
+            val tele = TrainTelemetry(
+                trainNo = fullTrain,
+                direction = dir,
+                speed = spd,
+                positionKm = pos,
+                locoModel = loco,
+                locoCode = locoCode,
+                route = route,
+                category = cat,
+                isDetailed = isDet,
+                isRouteValid = routeValid,
+                isHit = isHit,
+                timestamp = now,
+                rawBcd = bcd
+            )
+
             if (keywords.isNotEmpty() && filterMode == "strict" && !isHit) {
-                // Ignore non-matching in strict filter mode
+                // Ignore non-matching in strict filter mode for live UI
             } else {
-                currentTelemetry = TrainTelemetry(
-                    trainNo = fullTrain,
-                    direction = dir,
-                    speed = spd,
-                    positionKm = pos,
-                    locoModel = loco,
-                    locoCode = locoCode,
-                    route = route,
-                    category = cat,
-                    isDetailed = isDet,
-                    isRouteValid = routeValid,
-                    isHit = isHit,
-                    timestamp = now,
-                    rawBcd = bcd
-                )
+                currentTelemetry = tele
 
                 if (arrivalEstimator != null) {
                     val routeOk = validForEta && routeValid
@@ -440,6 +555,16 @@ class LbjDecoder(
 
                 onTelemetryUpdated?.invoke(currentTelemetry, currentEta)
             }
+
+            // Evict expired sessions (>120s)
+            val expired = sessions.filter { now - ((it.value["timestamp"] as? Long) ?: 0L) > 120000 }.keys
+            for (k in expired) {
+                sessions.remove(k)
+                if (lastTrain == k) {
+                    lastTrain = null
+                }
+            }
+            return tele
         }
 
         // Evict expired sessions (>120s)
@@ -450,6 +575,7 @@ class LbjDecoder(
                 lastTrain = null
             }
         }
+        return null
     }
 
     private fun checkWatchlistHit(trainNo: String, loco: String): Boolean {

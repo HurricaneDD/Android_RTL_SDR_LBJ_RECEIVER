@@ -4,6 +4,7 @@ import com.example.decoder.BchDecoder
 import com.example.dsp.ComplexBuffer
 import com.example.dsp.DspConstants
 import java.nio.charset.Charset
+import java.util.Locale
 import java.util.Random
 import kotlin.math.PI
 import kotlin.math.cos
@@ -162,23 +163,23 @@ class SignalSimulator(
 
         // 2. Build 65-character BCD payload (15 chars short telemetry + 50 chars detailed payload)
         // Short telemetry (15 chars): trainBase (6 chars), speed (3 chars), space (1 char), position (5 chars)
-        val trainPadded = String.format("%-6s", scenario.trainBase)
-        val spdPadded = String.format("%03d", scenario.speed.toInt().coerceIn(0, 400))
+        val trainPadded = String.format(Locale.US, "%-6s", scenario.trainBase)
+        val spdPadded = String.format(Locale.US, "%03d", scenario.speed.toInt().coerceIn(0, 400))
         val kmInt = (currentKm * 10).toInt().coerceIn(0, 99999)
-        val posPadded = String.format("%05d", kmInt)
+        val posPadded = String.format(Locale.US, "%05d", kmInt)
         val shortBcd = "$trainPadded$spdPadded $posPadded" // exactly 15 chars
 
         // Detailed payload (50 chars):
         // prefix hex (4 chars) + loco info (8 chars) + spaces (2 chars) + route GBK hex (16 chars) + padding (20 chars)
         val prefixHex = buildString {
             for (c in scenario.prefix.take(2)) {
-                append(String.format("%02X", c.code))
+                append(String.format(Locale.US, "%02X", c.code))
             }
             while (length < 4) append("20")
         }
         val prefixBcd = prefixHex.map { hexToBcdChar(it) }.joinToString("")
 
-        val locoPart = String.format("%03d%-5s", scenario.locoCode, scenario.locoNum) // 8 chars
+        val locoPart = String.format(Locale.US, "%03d%-5s", scenario.locoCode, scenario.locoNum) // 8 chars
 
         val gbkBytes = try {
             scenario.route.toByteArray(Charset.forName("GBK"))
@@ -186,7 +187,7 @@ class SignalSimulator(
             scenario.route.toByteArray()
         }
         val gbkHex = buildString {
-            for (b in gbkBytes) append(String.format("%02X", b.toInt() and 0xFF))
+            for (b in gbkBytes) append(String.format(Locale.US, "%02X", b.toInt() and 0xFF))
             while (length < 16) append("20")
         }
         val routeBcd = gbkHex.take(16).map { hexToBcdChar(it) }.joinToString("")

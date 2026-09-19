@@ -33,10 +33,20 @@ interface LbjDao {
     @Query("UPDATE train_records SET lastSeenTime = :lastSeenTime WHERE id = :id")
     suspend fun updateLastSeenTime(id: Long, lastSeenTime: Long)
 
-    @Query("SELECT * FROM train_records WHERE (trainNo = :trainNo OR trainNo = :baseTrainNo OR :trainNo LIKE '%' || trainNo) AND lastSeenTime >= :minTime ORDER BY lastSeenTime DESC LIMIT 1")
+    @Query("SELECT * FROM train_records WHERE (trainNo = :trainNo OR trainNo = :baseTrainNo OR :trainNo LIKE '%' || trainNo OR trainNo LIKE '%' || :baseTrainNo OR :baseTrainNo LIKE '%' || trainNo) AND lastSeenTime >= :minTime ORDER BY lastSeenTime DESC LIMIT 1")
     suspend fun findRecentTrainSession(trainNo: String, baseTrainNo: String, minTime: Long): TrainRecord?
 
-    @Query("UPDATE train_records SET trainNo = :trainNo, direction = :direction, locoModel = :locoModel, locoCode = :locoCode, route = :route, category = :category, lastSeenTime = :lastSeenTime WHERE id = :id")
+    @Query("""
+        UPDATE train_records 
+        SET trainNo = CASE WHEN :trainNo != '----' AND :trainNo != '' THEN :trainNo ELSE trainNo END,
+            direction = CASE WHEN :direction != '未知' AND :direction NOT LIKE '未知%' THEN :direction ELSE direction END,
+            locoModel = CASE WHEN :locoModel != '----' AND :locoModel != '' THEN :locoModel ELSE locoModel END,
+            locoCode = CASE WHEN :locoCode != '---' AND :locoCode != '' THEN :locoCode ELSE locoCode END,
+            route = CASE WHEN :route != '----' AND :route != '' THEN :route ELSE route END,
+            category = CASE WHEN :category != '等待信号...' AND :category != '' THEN :category ELSE category END,
+            lastSeenTime = :lastSeenTime 
+        WHERE id = :id
+    """)
     suspend fun updateFullTrainRecord(
         id: Long,
         trainNo: String,
@@ -92,7 +102,7 @@ abstract class LbjDatabase : RoomDatabase() {
                     context.applicationContext,
                     LbjDatabase::class.java,
                     "lbj_receiver_db"
-                ).fallbackToDestructiveMigration().build()
+                ).fallbackToDestructiveMigration(dropAllTables = true).build()
                 INSTANCE = instance
                 instance
             }

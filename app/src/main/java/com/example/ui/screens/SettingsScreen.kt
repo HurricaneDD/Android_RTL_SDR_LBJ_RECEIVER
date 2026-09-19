@@ -21,15 +21,16 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.CellTower
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.DeleteSweep
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.FilterAlt
 import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.RecordVoiceOver
 import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material.icons.filled.Usb
-import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -94,12 +95,14 @@ fun SettingsScreen(
     onToggleKeepAlive: (Boolean) -> Unit,
     onToggleKeepScreenOn: (Boolean) -> Unit = {},
     onToggleSimulationButton: (Boolean) -> Unit,
+    onTogglePacketLogTab: (Boolean) -> Unit = {},
     onSelectTtsEngineMode: (String) -> Unit = {},
     onSelectThemeMode: (String) -> Unit = {},
     onClearTtsCache: () -> Pair<Int, Long> = { Pair(0, 0L) },
     onToggleEnableExternalAutomation: (Boolean) -> Unit = {},
     onResetAllSettings: () -> Unit,
     onLaunchDriver: () -> Unit,
+    onInstallDriver: () -> Unit = {},
     onTestVoiceBroadcast: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
@@ -197,7 +200,7 @@ fun SettingsScreen(
         Spacer(modifier = Modifier.height(14.dp))
 
         // 小分类: 语音播报设置
-        SettingsSectionHeader(icon = Icons.Default.VolumeUp, title = "语音播报设置")
+        SettingsSectionHeader(icon = Icons.AutoMirrored.Filled.VolumeUp, title = "语音播报设置")
         Card(
             modifier = Modifier
                 .fillMaxWidth()
@@ -504,6 +507,25 @@ fun SettingsScreen(
                             Text("尝试重新驱动设备", fontSize = 12.sp, color = PrimaryBlueDark)
                         }
                     }
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(start = 16.dp, end = 16.dp, bottom = 12.dp)
+                    ) {
+                        OutlinedButton(
+                            onClick = onInstallDriver,
+                            modifier = Modifier.fillMaxWidth().testTag("settings_install_driver_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Download,
+                                contentDescription = "安装驱动",
+                                tint = PrimaryBlue
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("安装内置 RTL-SDR 驱动程序 (sdr-driver.apk)", fontSize = 12.sp, color = PrimaryBlueDark)
+                        }
+                    }
                 }
             }
         }
@@ -530,6 +552,13 @@ fun SettingsScreen(
                     subtitle = "在仪表盘显示仿真演示按钮，用于无外置硬件时模拟 RF 信号流 (默认: 关闭)",
                     checked = state.showSimulationButton,
                     onCheckedChange = onToggleSimulationButton
+                )
+
+                SettingsSwitchItem(
+                    title = "报文日志显示",
+                    subtitle = "在底盘导航栏最后增加“报文日志”，点开后能显示每次解析到的报文日志 (默认: 关闭)",
+                    checked = state.showPacketLogTab,
+                    onCheckedChange = onTogglePacketLogTab
                 )
             }
         }

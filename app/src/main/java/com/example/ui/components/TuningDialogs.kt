@@ -26,10 +26,10 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.ClickableText
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.ContentCopy
@@ -41,7 +41,6 @@ import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material.icons.filled.Train
 import androidx.compose.material.icons.filled.Warning
-import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material.icons.filled.ZoomIn
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -78,8 +77,11 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.LinkAnnotation
+import androidx.compose.ui.text.TextLinkStyles
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.withLink
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -271,7 +273,7 @@ fun GainDialog(
         text = {
             Column {
                 Text(
-                    text = "推荐默认增益: 15.7 dB (信噪比与灵敏度平衡最佳)",
+                    text = "推荐默认增益: 15.7 dB (信噪比与灵敏度平衡最佳)。当列车接近或信号极强(RSSI > -20dB)导致解调失败/ADC削波时，请调低至 7.7 ~ 14.4 dB。",
                     color = TextSecondary,
                     fontSize = 12.sp
                 )
@@ -548,7 +550,7 @@ fun RouteStationKmDialog(
                 OutlinedTextField(
                     value = nicknameText,
                     onValueChange = { nicknameText = it },
-                    label = { Text("本站位置/观察点昵称（如：中和桥道口、中华门站）") },
+                    label = { Text("本站位置/观察点昵称（如：南京站、中和桥道口、中华门站）") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -556,7 +558,7 @@ fun RouteStationKmDialog(
                 OutlinedTextField(
                     value = routeText,
                     onValueChange = { routeText = it },
-                    label = { Text("线路名称（如：宁芜线、京沪高铁）") },
+                    label = { Text("线路名称（如：宁芜线、京沪线）") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -742,34 +744,31 @@ fun SignalLossDialog(
 
             val annotatedText = buildAnnotatedString {
                 append(part1)
-                pushStringAnnotation(tag = "OPEN_SETTINGS", annotation = "marto.rtl_tcp_andro")
-                withStyle(
-                    style = SpanStyle(
-                        color = Color(0xFF2563EB),
-                        fontWeight = FontWeight.Bold,
-                        textDecoration = TextDecoration.Underline
-                    )
-                ) {
+                val link = LinkAnnotation.Clickable(
+                    tag = "OPEN_SETTINGS",
+                    styles = TextLinkStyles(
+                        style = SpanStyle(
+                            color = Color(0xFF2563EB),
+                            fontWeight = FontWeight.Bold,
+                            textDecoration = TextDecoration.Underline
+                        )
+                    ),
+                    linkInteractionListener = { onOpenDriverSettings() }
+                )
+                withLink(link) {
                     append(linkText)
                 }
-                pop()
                 append(part2)
             }
 
             Column(modifier = Modifier.fillMaxWidth()) {
-                ClickableText(
+                Text(
                     text = annotatedText,
                     style = TextStyle(
                         color = TextPrimary,
                         fontSize = 13.sp,
                         lineHeight = 20.sp
-                    ),
-                    onClick = { offset ->
-                        annotatedText.getStringAnnotations(tag = "OPEN_SETTINGS", start = offset, end = offset)
-                            .firstOrNull()?.let {
-                                onOpenDriverSettings()
-                            }
-                    }
+                    )
                 )
             }
         },
@@ -823,14 +822,14 @@ fun AboutAppDialog(onDismiss: () -> Unit) {
                     fontWeight = FontWeight.Bold
                 )
                 Text(
-                    text = "v1.1.1 (Build 5)",
+                    text = "v1.1.2 (Build 1)",
                     color = TextMuted,
                     fontSize = 12.sp,
                     fontFamily = FontFamily.Monospace
                 )
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(
-                    text = "构建时间：2026-09-05 00:00",
+                    text = "构建时间：2026-09-18 23:00",
                     color = TextMuted,
                     fontSize = 11.5.sp,
                     fontFamily = FontFamily.Monospace
@@ -1439,7 +1438,7 @@ fun BasebandAudioVolumeDialog(
         title = {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(
-                    imageVector = Icons.Default.VolumeUp,
+                    imageVector = Icons.AutoMirrored.Filled.VolumeUp,
                     contentDescription = null,
                     tint = PrimaryBlue,
                     modifier = Modifier.padding(end = 8.dp)

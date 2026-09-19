@@ -1,5 +1,6 @@
 package com.example.util
 
+import android.annotation.SuppressLint
 import android.content.Context
 import android.media.AudioAttributes
 import android.media.AudioManager
@@ -203,18 +204,13 @@ class NetworkTtsManager(private val context: Context) {
                 val mp = MediaPlayer()
                 mediaPlayer = mp
 
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
-                    mp.setAudioAttributes(
-                        AudioAttributes.Builder()
-                            .setUsage(AudioAttributes.USAGE_MEDIA)
-                            .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
-                            .setLegacyStreamType(AudioManager.STREAM_MUSIC)
-                            .build()
-                    )
-                } else {
-                    @Suppress("DEPRECATION")
-                    mp.setAudioStreamType(AudioManager.STREAM_MUSIC)
-                }
+                mp.setAudioAttributes(
+                    AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_MEDIA)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                        .setLegacyStreamType(AudioManager.STREAM_MUSIC)
+                        .build()
+                )
 
                 // Use FileDescriptor for maximum compatibility across Android 6-15
                 FileInputStream(file).use { fis ->
@@ -280,6 +276,16 @@ class NetworkTtsManager(private val context: Context) {
         }
     }
 
+    fun isPlaying(): Boolean {
+        synchronized(playLock) {
+            return try {
+                mediaPlayer?.isPlaying == true
+            } catch (_: Exception) {
+                false
+            }
+        }
+    }
+
     fun release() {
         currentPlayJob?.cancel()
         stopPlayback()
@@ -327,6 +333,7 @@ class NetworkTtsManager(private val context: Context) {
     /**
      * Enables TLS 1.2 on Android 6.0 and disables SSL certificate strict checks for maximum network compatibility.
      */
+    @SuppressLint("TrustAllX509TrustManager", "BadHostnameVerifier", "CustomX509TrustManager")
     private fun enableTls12OnAndroid6() {
         try {
             val trustAllCerts = arrayOf<TrustManager>(object : X509TrustManager {

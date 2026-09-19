@@ -15,7 +15,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.HelpOutline
+import androidx.compose.material.icons.automirrored.filled.HelpOutline
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -41,6 +41,8 @@ import com.example.ui.theme.EmeraldGreen
 import com.example.ui.theme.PrimaryBlue
 import com.example.ui.theme.PrimaryBlueDark
 import com.example.ui.theme.PrimaryBlueSoft
+import com.example.ui.theme.RedAlert
+import com.example.ui.theme.RedSoft
 import com.example.ui.theme.SurfaceCard
 import com.example.ui.theme.TextMuted
 import com.example.ui.theme.TextPrimary
@@ -66,6 +68,7 @@ fun SpectrumWaterfallView(
     peakDb: Float?,
     fps: Float = 0.0f,
     isReceiving: Boolean = false,
+    isAdcClipping: Boolean = false,
     onClick: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
@@ -119,7 +122,7 @@ fun SpectrumWaterfallView(
                         ) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Icon(
-                                    imageVector = Icons.Default.HelpOutline,
+                                    imageVector = Icons.AutoMirrored.Filled.HelpOutline,
                                     contentDescription = "科普说明",
                                     tint = PrimaryBlueDark,
                                     modifier = Modifier.height(12.dp).width(12.dp)
@@ -383,6 +386,23 @@ fun SpectrumWaterfallView(
                         fontSize = 10.sp,
                         fontFamily = FontFamily.Monospace
                     )
+                }
+                if (isAdcClipping) {
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Box(
+                        modifier = Modifier
+                            .background(RedSoft, RoundedCornerShape(4.dp))
+                            .border(1.dp, RedAlert.copy(alpha = 0.5f), RoundedCornerShape(4.dp))
+                            .padding(horizontal = 4.dp, vertical = 1.dp)
+                    ) {
+                        Text(
+                            text = "⚠ ADC削波/过载",
+                            color = RedAlert,
+                            fontSize = 9.5.sp,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = FontFamily.Monospace
+                        )
+                    }
                 }
             }
 

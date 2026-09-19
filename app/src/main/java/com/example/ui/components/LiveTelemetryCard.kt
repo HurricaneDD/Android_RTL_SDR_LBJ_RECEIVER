@@ -18,7 +18,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.AltRoute
+import androidx.compose.material.icons.automirrored.filled.AltRoute
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Navigation
 import androidx.compose.material.icons.filled.Speed
@@ -351,7 +351,7 @@ fun LiveTelemetryCard(
                     ) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Icon(
-                                imageVector = Icons.Default.AltRoute,
+                                imageVector = Icons.AutoMirrored.Filled.AltRoute,
                                 contentDescription = "Route Direction Km",
                                 tint = EmeraldGreen,
                                 modifier = Modifier.padding(end = 6.dp)

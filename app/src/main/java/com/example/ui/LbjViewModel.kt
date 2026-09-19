@@ -34,7 +34,21 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.flow.update
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+
+data class PacketLogItem(
+    val id: Long,
+    val timestamp: Long,
+    val timeFormatted: String,
+    val content: String,
+    val fullFormattedText: String
+)
 
 data class ReceiverState(
     val isRunning: Boolean = false,
@@ -62,11 +76,12 @@ data class ReceiverState(
     val warningMessage: String = "",
     val warningTime: Long = 0L,
     val broadcastAlerts: Boolean = false,
-    val alertToneEnabled: Boolean = false,
+    val alertToneEnabled: Boolean = true,
     val alertNotificationEnabled: Boolean = false,
     val keepAliveEnabled: Boolean = false,
     val keepScreenOn: Boolean = false,
     val showSimulationButton: Boolean = false,
+    val showPacketLogTab: Boolean = false,
     val ttsEngineMode: String = "auto",
     val enableExternalAutomation: Boolean = false,
     val themeMode: String = "system",
@@ -80,7 +95,10 @@ data class ReceiverState(
     val peakDeltaHz: Double? = null,
     val peakDb: Float? = null,
     val currentRouteStationKmText: String = "---",
-    val fps: Float = 0.0f
+    val fps: Float = 0.0f,
+    val isAdcClipping: Boolean = false,
+    val showFirstLaunchDriverPrompt: Boolean = false,
+    val showDriverInstallGuideDialog: Boolean = false
 )
 
 class LbjViewModel(application: Application) : AndroidViewModel(application) {
@@ -111,6 +129,7 @@ class LbjViewModel(application: Application) : AndroidViewModel(application) {
             keepAliveEnabled = prefs.keepAliveEnabled,
             keepScreenOn = prefs.keepScreenOn,
             showSimulationButton = prefs.showSimulationButton,
+            showPacketLogTab = prefs.showPacketLogTab,
             ttsEngineMode = prefs.ttsEngineMode,
             enableExternalAutomation = prefs.enableExternalAutomation,
             themeMode = prefs.themeMode,
@@ -119,6 +138,9 @@ class LbjViewModel(application: Application) : AndroidViewModel(application) {
         )
     )
     val receiverState: StateFlow<ReceiverState> = _receiverState.asStateFlow()
+
+    private val _packetLogs = MutableStateFlow<List<PacketLogItem>>(emptyList())
+    val packetLogs: StateFlow<List<PacketLogItem>> = _packetLogs.asStateFlow()
 
     private val _liveTelemetry = MutableStateFlow(TrainTelemetry())
     val liveTelemetry: StateFlow<TrainTelemetry> = _liveTelemetry.asStateFlow()
@@ -174,17 +196,33 @@ class LbjViewModel(application: Application) : AndroidViewModel(application) {
     private var currentTrainSignalCount: Int = 0
 
     // Train Session Tracking (Single history record per train pass)
+    private val trainDbMutex = Mutex()
     private var activeTrainRecordId: Long? = null
     private var activeTrainNo: String? = null
     private var lastValidTelemetryTime: Long = 0L
 
-    // Track last alert announcement time per train number for 2-minute repeated alert rule:
-    // Key: base train number (digits), Value: timestamp in epoch ms of last alert announcement
-    private val trainAlertHistory = java.util.concurrent.ConcurrentHashMap<String, Long>()
+    // Tracks train arrival speech announcements
+    private var hasAnnouncedApproach: Boolean = false
+    private var lastVoiceAlertTime: Long = 0L
+    private var pendingApproachJob: Job? = null
 
     init {
+        // First-launch driver check
+        if (!prefs.hasPromptedDriverInstall) {
+            _receiverState.value = _receiverState.value.copy(showFirstLaunchDriverPrompt = true)
+        }
+
         // Refresh TTS audio cache stats
         refreshTtsCacheInfo()
+
+        // 3-minute inactivity watchdog: if no telegram updates received within 3 minutes (180s),
+        // automatically clear active train information and finalize session
+        viewModelScope.launch {
+            while (isActive) {
+                delay(1000L)
+                checkTrainTelemetryTimeout()
+            }
+        }
 
         // Load saved route KM mappings from Room (No dummy seed routes)
         viewModelScope.launch(Dispatchers.IO) {
@@ -202,26 +240,25 @@ class LbjViewModel(application: Application) : AndroidViewModel(application) {
             _liveEta.value = eta
 
             // Play alert sound & speak announcement immediately upon train detection
-            val currentNo = telemetry.trainNo
+            val currentNo = LocomotiveDict.normalizeTrainNo(telemetry.trainNo)
             if (currentNo != "----" && currentNo.isNotBlank()) {
                 val isSame = activeTrainNo != null && LocomotiveDict.isSameTrain(activeTrainNo!!, currentNo)
-                val isNewTrainSession = !isSame || activeTrainRecordId == null
+                val isNewTrainSession = !isSame
 
                 if (isNewTrainSession) {
                     currentTrainSignalCount = 1
                     activeTrainNo = currentNo
+                    hasAnnouncedApproach = false
+                    pendingApproachJob?.cancel()
+                    pendingApproachJob = null
 
-                    val baseNo = LocomotiveDict.extractBaseTrainNumber(currentNo)
-                    val isCompleteTrainNo = baseNo.isNotBlank() && currentNo != "----" && currentNo != "未知"
-                    val lastAlertTime = if (isCompleteTrainNo) trainAlertHistory[baseNo] else null
+                    val hasRichDetails = telemetry.isDetailed && telemetry.locoModel != "----" && telemetry.locoModel.isNotBlank()
 
                     if (_receiverState.value.alertToneEnabled) {
-                        if (isCompleteTrainNo && lastAlertTime != null && (now - lastAlertTime) <= 120_000L) {
-                            // 2分钟内再次收到同一完整有效车次报文：播报更新提示
-                            val updateSpeechText = SoundAlertManager.buildTrainUpdateSpeechText(currentNo)
-                            soundAlertManager.playAlertAndSpeak(updateSpeechText, _receiverState.value.ttsEngineMode)
-                        } else {
-                            // 首次收到或间隔超过2分钟：播报完整来车预警报文
+                        if (hasRichDetails) {
+                            // Rich packet received on first shot: mark announced and speak full approach alert immediately
+                            hasAnnouncedApproach = true
+                            lastVoiceAlertTime = now
                             val speechText = SoundAlertManager.buildTrainAlertSpeechText(
                                 locoModel = telemetry.locoModel,
                                 route = telemetry.route,
@@ -230,11 +267,33 @@ class LbjViewModel(application: Application) : AndroidViewModel(application) {
                                 trainNo = currentNo
                             )
                             soundAlertManager.playAlertAndSpeak(speechText, _receiverState.value.ttsEngineMode)
-                        }
-                    }
+                        } else {
+                            // Short packet received first: start double-beep tone immediately for zero-latency alert feedback
+                            soundAlertManager.playDoubleBeep()
 
-                    if (isCompleteTrainNo) {
-                        trainAlertHistory[baseNo] = now
+                            // Schedule approach announcement with 600ms debounce window to absorb the detailed packet
+                            pendingApproachJob = viewModelScope.launch {
+                                delay(600)
+                                val latest = _liveTelemetry.value
+                                val bestTrainNo = activeTrainNo ?: currentNo
+                                val speechText = SoundAlertManager.buildTrainAlertSpeechText(
+                                    locoModel = latest.locoModel,
+                                    route = latest.route,
+                                    direction = latest.direction,
+                                    speedKmH = latest.speed,
+                                    trainNo = bestTrainNo
+                                )
+                                hasAnnouncedApproach = true
+                                lastVoiceAlertTime = System.currentTimeMillis()
+                                pendingApproachJob = null
+                                if (_receiverState.value.alertToneEnabled) {
+                                    soundAlertManager.speakText(speechText, _receiverState.value.ttsEngineMode)
+                                }
+                            }
+                        }
+                    } else {
+                        hasAnnouncedApproach = true
+                        lastVoiceAlertTime = now
                     }
 
                     if (_receiverState.value.alertNotificationEnabled) {
@@ -253,24 +312,39 @@ class LbjViewModel(application: Application) : AndroidViewModel(application) {
                         activeTrainNo = currentNo
                     }
 
-                    val baseNo = LocomotiveDict.extractBaseTrainNumber(currentNo)
-                    val isCompleteTrainNo = baseNo.isNotBlank() && currentNo != "----" && currentNo != "未知"
-                    val lastAlertTime = if (isCompleteTrainNo) trainAlertHistory[baseNo] else null
-
-                    if (isCompleteTrainNo && lastAlertTime != null && (now - lastAlertTime) <= 120_000L) {
-                        // 2分钟内第二次或多次收到同一车次号的报文
+                    if (!hasAnnouncedApproach) {
+                        // Approach announcement hasn't fired yet: cancel pending fallback job and announce approach now
+                        val hasRichDetails = telemetry.isDetailed && telemetry.locoModel != "----" && telemetry.locoModel.isNotBlank()
+                        pendingApproachJob?.cancel()
+                        pendingApproachJob = null
+                        hasAnnouncedApproach = true
+                        lastVoiceAlertTime = now
+                        val bestTrainNo = activeTrainNo ?: currentNo
+                        val speechText = SoundAlertManager.buildTrainAlertSpeechText(
+                            locoModel = if (hasRichDetails) telemetry.locoModel else _liveTelemetry.value.locoModel,
+                            route = if (hasRichDetails) telemetry.route else _liveTelemetry.value.route,
+                            direction = if (hasRichDetails) telemetry.direction else _liveTelemetry.value.direction,
+                            speedKmH = if (hasRichDetails) telemetry.speed else _liveTelemetry.value.speed,
+                            trainNo = bestTrainNo
+                        )
                         if (_receiverState.value.alertToneEnabled) {
-                            val updateSpeechText = SoundAlertManager.buildTrainUpdateSpeechText(currentNo)
-                            soundAlertManager.playAlertAndSpeak(updateSpeechText, _receiverState.value.ttsEngineMode)
+                            soundAlertManager.speakText(speechText, _receiverState.value.ttsEngineMode)
                         }
-                        trainAlertHistory[baseNo] = now
                     } else {
-                        if (isCompleteTrainNo) {
-                            trainAlertHistory[baseNo] = now
-                        }
-                        if (currentTrainSignalCount % 4 == 0) {
+                        // Approach announcement already done; check for updates after 45s cooldown
+                        val timeSinceLastVoice = now - lastVoiceAlertTime
+                        if (timeSinceLastVoice >= 45_000L && !soundAlertManager.isSpeaking() && pendingApproachJob == null) {
                             if (_receiverState.value.alertToneEnabled) {
-                                soundAlertManager.playDoubleBeep()
+                                val bestTrainNo = activeTrainNo ?: currentNo
+                                val updateSpeechText = SoundAlertManager.buildTrainUpdateSpeechText(bestTrainNo)
+                                soundAlertManager.playAlertAndSpeak(updateSpeechText, _receiverState.value.ttsEngineMode)
+                                lastVoiceAlertTime = now
+                            }
+                        } else {
+                            if (currentTrainSignalCount % 4 == 0) {
+                                if (_receiverState.value.alertToneEnabled) {
+                                    soundAlertManager.playSubtlePeriodicBeep()
+                                }
                             }
                         }
                     }
@@ -300,83 +374,38 @@ class LbjViewModel(application: Application) : AndroidViewModel(application) {
                     )
                 }
 
-                // Deduplicated Train History: Only 1 record per train pass, guaranteed recorded on reception
+                // Deduplicated Train History: Exactly 1 record per train pass, synchronized via Mutex to eliminate race conditions
                 viewModelScope.launch(Dispatchers.IO) {
-                    val baseNo = LocomotiveDict.extractBaseTrainNumber(currentNo)
-                    if (isNewTrainSession) {
-                        // Check if there is an existing session for the same train in the database within 10 minutes
-                        val recentRecord = dao.findRecentTrainSession(
-                            trainNo = currentNo,
-                            baseTrainNo = baseNo,
-                            minTime = now - 10 * 60 * 1000L
-                        )
+                    trainDbMutex.withLock {
+                        val baseNo = LocomotiveDict.extractBaseTrainNumber(currentNo)
+                        val nowSeen = now
 
-                        if (recentRecord != null) {
-                            // Resume and merge into existing session to prevent duplicate split records
-                            activeTrainRecordId = recentRecord.id
-                            val bestTrainNo = if (currentNo.any { it.isLetter() }) currentNo else recentRecord.trainNo
-                            dao.updateFullTrainRecord(
-                                id = recentRecord.id,
-                                trainNo = bestTrainNo,
-                                direction = if (telemetry.direction.isNotEmpty() && !telemetry.direction.startsWith("未知")) telemetry.direction else recentRecord.direction,
-                                locoModel = if (telemetry.locoModel != "----") telemetry.locoModel else recentRecord.locoModel,
-                                locoCode = if (telemetry.locoCode != "---") telemetry.locoCode else recentRecord.locoCode,
-                                route = if (telemetry.route != "----") telemetry.route else recentRecord.route,
-                                category = if (telemetry.category != "等待信号...") telemetry.category else recentRecord.category,
-                                lastSeenTime = now
-                            )
-                        } else {
-                            // Finalize previous train if any
+                        if (isNewTrainSession) {
+                            // Finalize previous train record if any
                             activeTrainRecordId?.let { prevId ->
-                                dao.updateLastSeenTime(prevId, now)
+                                dao.updateLastSeenTime(prevId, nowSeen)
                             }
-                            // Insert new train record
-                            val newRecord = TrainRecord(
-                                trainNo = currentNo,
-                                direction = telemetry.direction,
-                                locoModel = telemetry.locoModel,
-                                locoCode = telemetry.locoCode,
-                                route = telemetry.route,
-                                category = telemetry.category,
-                                firstSeenTime = now,
-                                lastSeenTime = now
-                            )
-                            val insertedId = dao.insertTrainRecord(newRecord)
-                            activeTrainRecordId = insertedId
-                        }
-                    } else {
-                        // Update existing train session with latest details
-                        val recordId = activeTrainRecordId
-                        if (recordId != null) {
-                            val bestTrainNo = if (currentNo.any { it.isLetter() }) currentNo else (activeTrainNo ?: currentNo)
-                            dao.updateFullTrainRecord(
-                                id = recordId,
-                                trainNo = bestTrainNo,
-                                direction = telemetry.direction,
-                                locoModel = if (telemetry.locoModel != "----") telemetry.locoModel else "----",
-                                locoCode = if (telemetry.locoCode != "---") telemetry.locoCode else "---",
-                                route = if (telemetry.route != "----") telemetry.route else "----",
-                                category = telemetry.category,
-                                lastSeenTime = now
-                            )
-                        } else {
+
+                            // Check if there is an existing session for the same train in DB within 10 minutes
                             val recentRecord = dao.findRecentTrainSession(
                                 trainNo = currentNo,
                                 baseTrainNo = baseNo,
-                                minTime = now - 10 * 60 * 1000L
+                                minTime = nowSeen - 10 * 60 * 1000L
                             )
+
                             if (recentRecord != null) {
+                                // Resume and merge into existing session
                                 activeTrainRecordId = recentRecord.id
                                 val bestTrainNo = if (currentNo.any { it.isLetter() }) currentNo else recentRecord.trainNo
                                 dao.updateFullTrainRecord(
                                     id = recentRecord.id,
                                     trainNo = bestTrainNo,
                                     direction = telemetry.direction,
-                                    locoModel = if (telemetry.locoModel != "----") telemetry.locoModel else recentRecord.locoModel,
-                                    locoCode = if (telemetry.locoCode != "---") telemetry.locoCode else recentRecord.locoCode,
-                                    route = if (telemetry.route != "----") telemetry.route else recentRecord.route,
+                                    locoModel = telemetry.locoModel,
+                                    locoCode = telemetry.locoCode,
+                                    route = telemetry.route,
                                     category = telemetry.category,
-                                    lastSeenTime = now
+                                    lastSeenTime = nowSeen
                                 )
                             } else {
                                 val newRecord = TrainRecord(
@@ -386,8 +415,49 @@ class LbjViewModel(application: Application) : AndroidViewModel(application) {
                                     locoCode = telemetry.locoCode,
                                     route = telemetry.route,
                                     category = telemetry.category,
-                                    firstSeenTime = now,
-                                    lastSeenTime = now
+                                    firstSeenTime = nowSeen,
+                                    lastSeenTime = nowSeen
+                                )
+                                val insertedId = dao.insertTrainRecord(newRecord)
+                                activeTrainRecordId = insertedId
+                            }
+                        } else {
+                            // Existing train session continuation
+                            var recordId = activeTrainRecordId
+                            if (recordId == null) {
+                                val recentRecord = dao.findRecentTrainSession(
+                                    trainNo = currentNo,
+                                    baseTrainNo = baseNo,
+                                    minTime = nowSeen - 10 * 60 * 1000L
+                                )
+                                if (recentRecord != null) {
+                                    recordId = recentRecord.id
+                                    activeTrainRecordId = recentRecord.id
+                                }
+                            }
+
+                            if (recordId != null) {
+                                val bestTrainNo = if (currentNo.any { it.isLetter() }) currentNo else (activeTrainNo ?: currentNo)
+                                dao.updateFullTrainRecord(
+                                    id = recordId,
+                                    trainNo = bestTrainNo,
+                                    direction = telemetry.direction,
+                                    locoModel = telemetry.locoModel,
+                                    locoCode = telemetry.locoCode,
+                                    route = telemetry.route,
+                                    category = telemetry.category,
+                                    lastSeenTime = nowSeen
+                                )
+                            } else {
+                                val newRecord = TrainRecord(
+                                    trainNo = currentNo,
+                                    direction = telemetry.direction,
+                                    locoModel = telemetry.locoModel,
+                                    locoCode = telemetry.locoCode,
+                                    route = telemetry.route,
+                                    category = telemetry.category,
+                                    firstSeenTime = nowSeen,
+                                    lastSeenTime = nowSeen
                                 )
                                 val insertedId = dao.insertTrainRecord(newRecord)
                                 activeTrainRecordId = insertedId
@@ -408,6 +478,10 @@ class LbjViewModel(application: Application) : AndroidViewModel(application) {
 
         decoder.onWarningCleared = {
             // Keep warning for user-specified 4 seconds duration; auto-cleared in DSP loop timer
+        }
+
+        decoder.onPacketLog = { content ->
+            addPacketLog(content)
         }
 
         rtlClient.onStateChanged = { state, error ->
@@ -542,14 +616,37 @@ class LbjViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun finalizeActiveTrainSession() {
         val id = activeTrainRecordId
+        activeTrainRecordId = null
+        activeTrainNo = null
+        currentTrainSignalCount = 0
+        hasAnnouncedApproach = false
+        lastVoiceAlertTime = 0L
+        pendingApproachJob?.cancel()
+        pendingApproachJob = null
         if (id != null) {
             val now = System.currentTimeMillis()
             viewModelScope.launch(Dispatchers.IO) {
-                dao.updateLastSeenTime(id, now)
+                trainDbMutex.withLock {
+                    dao.updateLastSeenTime(id, now)
+                }
             }
-            activeTrainRecordId = null
-            activeTrainNo = null
-            currentTrainSignalCount = 0
+        }
+    }
+
+    private fun checkTrainTelemetryTimeout(nowMs: Long = System.currentTimeMillis()) {
+        if (_liveTelemetry.value.trainNo != "----" && lastValidTelemetryTime > 0L) {
+            if (nowMs - lastValidTelemetryTime >= 180_000L) {
+                finalizeActiveTrainSession()
+                currentTrainSignalCount = 0
+                clearLiveTelemetry()
+                if (_receiverState.value.keepAliveEnabled) {
+                    LbjKeepAliveService.update(
+                        getApplication(),
+                        "SDR-LBJ 信号监听守候中",
+                        "等待下一趟列车报文"
+                    )
+                }
+            }
         }
     }
 
@@ -565,6 +662,7 @@ class LbjViewModel(application: Application) : AndroidViewModel(application) {
         var lastFpsCalcTime = System.currentTimeMillis()
         var frameCountInSec = 0
         var currentFps = 0.0f
+        var lastClippingDetectedTime = 0L
 
         while (viewModelScope.isActive && _receiverState.value.isRunning) {
             val iq = if (isSimulation) {
@@ -602,26 +700,18 @@ class LbjViewModel(application: Application) : AndroidViewModel(application) {
 
             val nowMs = System.currentTimeMillis()
 
-            // Check if active train session in DB should be finalized (>180s with no packet).
-            // NOTE: Do NOT clear _liveTelemetry so train details stay visible until the next train or manual reset.
-            if (_liveTelemetry.value.trainNo != "----" && lastValidTelemetryTime > 0L) {
-                if (nowMs - lastValidTelemetryTime > 180000L) {
-                    finalizeActiveTrainSession()
-                    currentTrainSignalCount = 0
-                    if (_receiverState.value.keepAliveEnabled) {
-                        LbjKeepAliveService.update(
-                            getApplication(),
-                            "SDR-LBJ 信号监听守候中",
-                            "等待下一趟列车报文"
-                        )
-                    }
-                }
-            }
+            // Check if train telemetry has timed out (>= 180s without next update packet)
+            checkTrainTelemetryTimeout(nowMs)
 
-            // Auto-clear BCH warning message if expired (>= 4.0s)
+            // Auto-clear transient warning messages (BCH/interference: 4s; ADC clipping/overload: 10s)
             val curWarn = _receiverState.value.warningMessage
-            if (curWarn.isNotEmpty() && (curWarn.contains("BCH") || curWarn.contains("干扰")) && (nowMs - _receiverState.value.warningTime >= 4000L)) {
-                _receiverState.value = _receiverState.value.copy(warningMessage = "")
+            if (curWarn.isNotEmpty()) {
+                val warnAge = nowMs - _receiverState.value.warningTime
+                val isBchWarn = curWarn.contains("BCH") || curWarn.contains("干扰")
+                val isAdcWarn = curWarn.contains("削波") || curWarn.contains("过载") || curWarn.contains("过强")
+                if ((isBchWarn && warnAge >= 4000L) || (isAdcWarn && warnAge >= 10000L)) {
+                    _receiverState.value = _receiverState.value.copy(warningMessage = "")
+                }
             }
 
             // 1. Offload FFT & spectrum processing to dedicated background thread pool (throttled ~10 Hz to prevent CPU starvation on low-end CPUs)
@@ -650,8 +740,35 @@ class LbjViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
 
+            // Check for raw ADC saturation/clipping (RTL2832U 8-bit ADC saturates at ±127/128, normalized to ±1.0)
+            var clipCount = 0
+            val checkN = minOf(1024, iq.size)
+            for (ci in 0 until checkN) {
+                if (kotlin.math.abs(iq.real[ci]) >= 0.98f || kotlin.math.abs(iq.imag[ci]) >= 0.98f) {
+                    clipCount++
+                }
+            }
+            val isBlockClipping = (clipCount > (checkN * 0.03))
+            if (isBlockClipping) {
+                lastClippingDetectedTime = nowMs
+            }
+
             // 2. Process DSP frontend chain (DDC, Halfband, FIR Decimation, FM Demod)
             val dspRes = dspFrontend.process(iq, rssiGate)
+
+            if (dspRes.rssiDb >= -15.0f) {
+                lastClippingDetectedTime = nowMs
+            }
+            // ADC clipping flag remains active for 10 seconds after detection, then automatically clears
+            val activeClipping = (nowMs - lastClippingDetectedTime < 10000L)
+
+            // Auto-warn when ADC clipping/saturation occurs
+            if (activeClipping && _receiverState.value.warningMessage.isEmpty()) {
+                _receiverState.value = _receiverState.value.copy(
+                    warningMessage = "⚠ 射频信号过强 (RSSI接近-10dB)，ADC削波失真，建议降低硬件增益",
+                    warningTime = nowMs
+                )
+            }
 
             // Stream baseband audio (analog radio static / demodulated audio) to speaker if enabled
             if (_receiverState.value.basebandAudioEnabled) {
@@ -699,7 +816,8 @@ class LbjViewModel(application: Application) : AndroidViewModel(application) {
                     afcErrHz = dspFrontend.afc.lastErrHz,
                     afcScore = dspFrontend.afc.lastScore,
                     currentRouteStationKmText = routeKmText,
-                    fps = currentFps
+                    fps = currentFps,
+                    isAdcClipping = activeClipping
                 )
             }
         }
@@ -798,6 +916,31 @@ class LbjViewModel(application: Application) : AndroidViewModel(application) {
         _receiverState.value = _receiverState.value.copy(showSimulationButton = enabled)
     }
 
+    fun setShowPacketLogTab(enabled: Boolean) {
+        prefs.showPacketLogTab = enabled
+        _receiverState.value = _receiverState.value.copy(showPacketLogTab = enabled)
+    }
+
+    fun addPacketLog(content: String, timestamp: Long = System.currentTimeMillis()) {
+        val sdf = SimpleDateFormat("yyyy-MM-dd-HH:mm:ss", Locale.getDefault())
+        val timeStr = sdf.format(Date(timestamp))
+        val full = "$timeStr 接到报文：\n$content"
+        val item = PacketLogItem(
+            id = System.nanoTime(),
+            timestamp = timestamp,
+            timeFormatted = timeStr,
+            content = content,
+            fullFormattedText = full
+        )
+        _packetLogs.update { current ->
+            (listOf(item) + current).take(500)
+        }
+    }
+
+    fun clearPacketLogs() {
+        _packetLogs.value = emptyList()
+    }
+
     fun setTtsEngineMode(mode: String) {
         prefs.ttsEngineMode = mode
         _receiverState.value = _receiverState.value.copy(ttsEngineMode = mode)
@@ -857,11 +1000,12 @@ class LbjViewModel(application: Application) : AndroidViewModel(application) {
         setFilterMode("highlight")
         setKeywords(emptyList())
         setBroadcastAlerts(false)
-        setAlertToneEnabled(false)
+        setAlertToneEnabled(true)
         setAlertNotificationEnabled(false)
         setKeepAliveEnabled(false)
         setKeepScreenOn(false)
         setShowSimulationButton(false)
+        setShowPacketLogTab(false)
         setTtsEngineMode("auto")
         setEnableExternalAutomation(false)
         setThemeMode("system")
@@ -921,8 +1065,18 @@ class LbjViewModel(application: Application) : AndroidViewModel(application) {
 
     fun clearLiveTelemetry() {
         lastDecodedTrainNo = ""
+        lastValidTelemetryTime = 0L
         _liveTelemetry.value = TrainTelemetry()
         _liveEta.value = EtaInfo()
+        decoder.clearCurrentTrain()
+        hasAnnouncedApproach = false
+        lastVoiceAlertTime = 0L
+        pendingApproachJob?.cancel()
+        pendingApproachJob = null
+    }
+
+    fun clearWarning() {
+        _receiverState.value = _receiverState.value.copy(warningMessage = "")
     }
 
     fun clearHistory() {
@@ -954,13 +1108,55 @@ class LbjViewModel(application: Application) : AndroidViewModel(application) {
         )
         if (!ok) {
             _receiverState.value = _receiverState.value.copy(
-                warningMessage = "未找到 RTL-SDR 驱动应用，请安装 RTL-SDR Driver 或开启仿真演示模式。"
+                warningMessage = "未找到 RTL-SDR 驱动应用，已为您弹出内置驱动安装引导。",
+                showDriverInstallGuideDialog = true
             )
         }
     }
 
     fun openDriverAppSettings() {
         DriverLauncher.openDriverAppSettings(getApplication())
+    }
+
+    fun onUserConfirmDriverAlreadyInstalled() {
+        prefs.hasPromptedDriverInstall = true
+        _receiverState.value = _receiverState.value.copy(showFirstLaunchDriverPrompt = false)
+    }
+
+    fun onUserSelectDriverNotInstalled() {
+        prefs.hasPromptedDriverInstall = true
+        _receiverState.value = _receiverState.value.copy(
+            showFirstLaunchDriverPrompt = false,
+            showDriverInstallGuideDialog = true
+        )
+    }
+
+    fun openDriverInstallGuide() {
+        _receiverState.value = _receiverState.value.copy(showDriverInstallGuideDialog = true)
+    }
+
+    fun dismissDriverInstallGuide() {
+        _receiverState.value = _receiverState.value.copy(showDriverInstallGuideDialog = false)
+    }
+
+    fun dismissFirstLaunchDriverPrompt() {
+        prefs.hasPromptedDriverInstall = true
+        _receiverState.value = _receiverState.value.copy(showFirstLaunchDriverPrompt = false)
+    }
+
+    fun installDriverApk(): Pair<Boolean, String?> {
+        _receiverState.value = _receiverState.value.copy(showDriverInstallGuideDialog = false)
+        val result = DriverLauncher.installDriverApk(getApplication())
+        if (!result.first) {
+            _receiverState.value = _receiverState.value.copy(
+                warningMessage = "驱动安装失败: ${result.second ?: "请检查权限或文件"}"
+            )
+        }
+        return result
+    }
+
+    fun isDriverInstalled(): Boolean {
+        return DriverLauncher.isDriverInstalled(getApplication())
     }
 
     private var testVoiceSampleIndex = 0

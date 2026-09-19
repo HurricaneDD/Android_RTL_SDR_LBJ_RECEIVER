@@ -17,8 +17,8 @@ android {
     applicationId = "org.hurricanedd.rtlsdrlbj"
     minSdk = 21
     targetSdk = 36
-    versionCode = 110
-    versionName = "1.1.0"
+    versionCode = 112
+    versionName = "1.1.2"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
@@ -71,7 +71,7 @@ secrets {
   ignoreList.add("FIREBASE_APPCHECK_DEBUG_TOKEN")
 }
 
-googleServices { missingGoogleServicesStrategy = MissingGoogleServicesStrategy.WARN }
+googleServices { missingGoogleServicesStrategy = MissingGoogleServicesStrategy.IGNORE }
 
 // Some unused dependencies are commented out below instead of being removed.
 // This makes it easy to add them back in the future if needed.

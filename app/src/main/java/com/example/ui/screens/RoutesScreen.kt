@@ -19,8 +19,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.AltRoute
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.AltRoute
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.ImportExport
@@ -201,7 +201,7 @@ fun RoutesScreen(
             ) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Icon(
-                        imageVector = Icons.Default.AltRoute,
+                        imageVector = Icons.AutoMirrored.Filled.AltRoute,
                         contentDescription = "No Routes",
                         tint = TextSubtle,
                         modifier = Modifier.height(64.dp).width(64.dp)

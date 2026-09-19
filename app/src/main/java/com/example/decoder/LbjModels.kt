@@ -69,16 +69,35 @@ object LocomotiveDict {
     }
 
     /**
-     * 判断两个车次字符串是否指向同一趟列车会话（例如 "K516" 与 "516"，或两者相同）
+     * 规范化车次字符串：去除首尾空格、提取字母前缀（大写）、去除数字部分无意义的前导零（例如 "045001" -> "45001", " 516" -> "516"）
+     */
+    fun normalizeTrainNo(raw: String): String {
+        val trimmed = raw.trim()
+        if (trimmed.isEmpty() || trimmed == "----" || trimmed == "未知") return trimmed
+        val prefix = trimmed.filter { it.isLetter() }.uppercase()
+        val rawDigits = trimmed.filter { it.isDigit() }
+        val digits = rawDigits.trimStart('0')
+        val finalDigits = if (digits.isEmpty()) {
+            if (rawDigits.isNotEmpty()) "0" else ""
+        } else digits
+        return if (prefix.isNotEmpty() || finalDigits.isNotEmpty()) {
+            "$prefix$finalDigits"
+        } else {
+            trimmed
+        }
+    }
+
+    /**
+     * 判断两个车次字符串是否指向同一趟列车会话（例如 "K516" 与 "516"，或 "045001" 与 "45001"）
      */
     fun isSameTrain(trainA: String, trainB: String): Boolean {
-        val a = trainA.trim().uppercase()
-        val b = trainB.trim().uppercase()
+        val a = normalizeTrainNo(trainA).uppercase()
+        val b = normalizeTrainNo(trainB).uppercase()
         if (a.isEmpty() || b.isEmpty() || a == "----" || b == "----") return false
         if (a == b) return true
 
-        val numA = a.filter { it.isDigit() }
-        val numB = b.filter { it.isDigit() }
+        val numA = a.filter { it.isDigit() }.trimStart('0')
+        val numB = b.filter { it.isDigit() }.trimStart('0')
         if (numA.isNotEmpty() && numA == numB) {
             val prefixA = a.filter { it.isLetter() }
             val prefixB = b.filter { it.isLetter() }
@@ -90,11 +109,18 @@ object LocomotiveDict {
     }
 
     /**
-     * 提取纯数字基准车次（去除字母前缀），用于短报文和详细报文关联
+     * 提取纯数字基准车次（去除字母前缀并去除前导0），用于短报文和详细报文关联
      */
     fun extractBaseTrainNumber(trainNo: String): String {
-        val digits = trainNo.trim().filter { it.isDigit() }
-        return if (digits.isNotEmpty()) digits else trainNo.trim()
+        val rawDigits = trainNo.trim().filter { it.isDigit() }
+        val stripped = rawDigits.trimStart('0')
+        return if (stripped.isNotEmpty()) {
+            stripped
+        } else if (rawDigits.isNotEmpty()) {
+            "0"
+        } else {
+            trainNo.trim()
+        }
     }
 }
 

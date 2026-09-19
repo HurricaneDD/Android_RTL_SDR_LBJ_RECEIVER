@@ -21,7 +21,10 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.VolumeOff
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.CleaningServices
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Headphones
 import androidx.compose.material.icons.filled.HeadsetOff
 import androidx.compose.material.icons.filled.NotificationsActive
@@ -30,26 +33,38 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Sensors
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Usb
-import androidx.compose.material.icons.filled.VolumeOff
-import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material.icons.filled.Terminal
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import com.example.ui.PacketLogItem
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.decoder.EtaInfo
@@ -94,6 +109,9 @@ fun DashboardScreen(
     onToggleAlertTone: (Boolean) -> Unit,
     onToggleAlertNotification: (Boolean) -> Unit,
     onToggleBasebandAudio: (Boolean) -> Unit,
+    onDismissWarning: () -> Unit = {},
+    packetLogs: List<PacketLogItem> = emptyList(),
+    onNavigateToPacketLogs: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val scrollState = rememberScrollState()
@@ -322,6 +340,26 @@ fun DashboardScreen(
                     enter = fadeIn(),
                     exit = fadeOut()
                 ) {
+                    val warningAnnotated = remember(state.warningMessage) {
+                        val cleanText = state.warningMessage.removePrefix("⚠").trimStart()
+                        buildAnnotatedString {
+                            val regex = Regex("上行|下行")
+                            var cursor = 0
+                            for (match in regex.findAll(cleanText)) {
+                                if (match.range.first > cursor) {
+                                    append(cleanText.substring(cursor, match.range.first))
+                                }
+                                withStyle(SpanStyle(fontWeight = FontWeight.Bold)) {
+                                    append(match.value)
+                                }
+                                cursor = match.range.last + 1
+                            }
+                            if (cursor < cleanText.length) {
+                                append(cleanText.substring(cursor))
+                            }
+                        }
+                    }
+
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -340,10 +378,19 @@ fun DashboardScreen(
                                 .padding(end = 6.dp)
                         )
                         Text(
-                            text = state.warningMessage,
+                            text = warningAnnotated,
                             color = RedAlert,
                             fontSize = 12.sp,
-                            fontWeight = FontWeight.Medium
+                            fontWeight = FontWeight.Medium,
+                            modifier = Modifier.weight(1f)
+                        )
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = "Dismiss warning",
+                            tint = RedAlert.copy(alpha = 0.8f),
+                            modifier = Modifier
+                                .size(18.dp)
+                                .clickable { onDismissWarning() }
                         )
                     }
                 }
@@ -370,6 +417,7 @@ fun DashboardScreen(
             peakDb = state.peakDb,
             fps = state.fps,
             isReceiving = state.isRunning,
+            isAdcClipping = state.isAdcClipping,
             onClick = onOpenFftExplanationDialog
         )
 
@@ -419,7 +467,7 @@ fun DashboardScreen(
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     Icon(
-                        imageVector = if (state.alertToneEnabled) Icons.Default.VolumeUp else Icons.Default.VolumeOff,
+                        imageVector = if (state.alertToneEnabled) Icons.AutoMirrored.Filled.VolumeUp else Icons.AutoMirrored.Filled.VolumeOff,
                         contentDescription = "语音播报",
                         tint = if (state.alertToneEnabled) PrimaryBlue else TextMuted,
                         modifier = Modifier.size(20.dp)
@@ -659,6 +707,149 @@ fun DashboardScreen(
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Bold
                     )
+                }
+            }
+        }
+
+        if (state.showPacketLogTab) {
+            Spacer(modifier = Modifier.height(16.dp))
+            DashboardPacketLogCard(
+                packetLogs = packetLogs,
+                onNavigateToPacketLogs = onNavigateToPacketLogs
+            )
+        }
+    }
+}
+
+@Composable
+private fun DashboardPacketLogCard(
+    packetLogs: List<PacketLogItem>,
+    onNavigateToPacketLogs: (() -> Unit)?
+) {
+    var isExpanded by remember { mutableStateOf(false) }
+
+    Card(
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(containerColor = SurfaceCard),
+        border = CardDefaults.outlinedCardBorder().copy(brush = androidx.compose.ui.graphics.SolidColor(BorderLight)),
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("card_dashboard_packet_logs")
+    ) {
+        Column(modifier = Modifier.padding(14.dp)) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { isExpanded = !isExpanded },
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Default.Terminal,
+                        contentDescription = null,
+                        tint = PrimaryBlue,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "报文日志",
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = TextPrimary
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Box(
+                        modifier = Modifier
+                            .background(PrimaryBlueSoft, RoundedCornerShape(4.dp))
+                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                    ) {
+                        Text(
+                            text = "${packetLogs.size} 条",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = PrimaryBlueDark
+                        )
+                    }
+                }
+
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (onNavigateToPacketLogs != null) {
+                        TextButton(
+                            onClick = onNavigateToPacketLogs,
+                            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                        ) {
+                            Text("完整页面", fontSize = 12.sp, color = PrimaryBlueDark)
+                            Spacer(modifier = Modifier.width(2.dp))
+                            Icon(Icons.Default.OpenInNew, contentDescription = "打开完整页面", modifier = Modifier.size(14.dp), tint = PrimaryBlueDark)
+                        }
+                    }
+                    IconButton(
+                        onClick = { isExpanded = !isExpanded },
+                        modifier = Modifier.size(32.dp)
+                    ) {
+                        Icon(
+                            imageVector = if (isExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                            contentDescription = if (isExpanded) "收起" else "展开",
+                            tint = TextMuted
+                        )
+                    }
+                }
+            }
+
+            if (isExpanded) {
+                Spacer(modifier = Modifier.height(12.dp))
+                if (packetLogs.isEmpty()) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(SurfaceSecondary, RoundedCornerShape(8.dp))
+                            .padding(16.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = "暂无报文日志。启动接收机或开启仿真后将实时捕获并解析报文。",
+                            fontSize = 12.sp,
+                            color = TextMuted
+                        )
+                    }
+                } else {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        packetLogs.take(5).forEach { item ->
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .background(SurfaceSecondary, RoundedCornerShape(8.dp))
+                                    .padding(10.dp)
+                            ) {
+                                Column {
+                                    Text(
+                                        text = "${item.timeFormatted} 接到报文：",
+                                        fontFamily = FontFamily.Monospace,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 12.sp,
+                                        color = PrimaryBlueDark
+                                    )
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text(
+                                        text = item.content,
+                                        fontFamily = FontFamily.Monospace,
+                                        fontSize = 12.sp,
+                                        color = TextPrimary,
+                                        lineHeight = 17.sp
+                                    )
+                                }
+                            }
+                        }
+                        if (packetLogs.size > 5 && onNavigateToPacketLogs != null) {
+                            TextButton(
+                                onClick = onNavigateToPacketLogs,
+                                modifier = Modifier.align(Alignment.CenterHorizontally)
+                            ) {
+                                Text("查看全部 ${packetLogs.size} 条日志 >", fontSize = 12.sp, color = PrimaryBlueDark)
+                            }
+                        }
+                    }
                 }
             }
         }
