@@ -9,7 +9,9 @@
 
 需要安装 Android 版 RTL-SDR 驱动，才能正常使用。
 
-**本软件启动时会自动引导你安装驱动软件**，请你依照引导正确安装。如果无法正常安装，可以尝试通过以下链接下载：
+**本软件启动时会自动引导你安装驱动软件**，请你依照引导正确安装。
+
+如果无法正常安装，可以尝试通过以下链接下载：
 
 - [RTL-SDR Driver / SDR Driver（Google Play）](https://play.google.com/store/apps/details?id=marto.rtl_tcp_andro)
 - [RTL-SDR Driver（F-Droid）](https://f-droid.org/en/packages/marto.rtl_tcp_andro/)
