@@ -7,11 +7,12 @@
 
 [<img alt="Get it on GitHub" src="media/github.png" width="200px">](https://github.com/HurricaneDD/Android_RTL_SDR_LBJ_RECEIVER/releases)
 
+
 需要安装 Android 版 RTL-SDR 驱动，才能正常使用。
 
-**本软件启动时会自动引导你安装驱动软件**，请你依照引导正确安装。
+**本软件启动时会自动引导你安装驱动软件，请依照引导正确安装。**
 
-如果无法正常安装，可以尝试通过以下链接下载：
+若无法正常安装，可以尝试通过以下链接下载：
 
 - [RTL-SDR Driver / SDR Driver（Google Play）](https://play.google.com/store/apps/details?id=marto.rtl_tcp_andro)
 - [RTL-SDR Driver（F-Droid）](https://f-droid.org/en/packages/marto.rtl_tcp_andro/)
@@ -40,7 +41,9 @@
 - 一根 USB to Type C 的 OTG 连接线，可以将接收器连接到安卓手机上。
 - 一台性能尚可的安卓手机，至少安卓5以上。建议在安卓10、骁龙845以上以保证良好的使用体验。
 
-其中接收机可以在闲鱼等平台买到，价值10-40元左右。OTG连接线价值5-20元左右。
+其中接收机可以在闲鱼等平台买到，价值10-40元左右，**建议购买前询问是否已带有天线**。
+
+OTG连接线价值5-20元左右。
 
 ## 可能发生的问题
 以下为已经记录到的问题和特性，**如果您在使用中发现问题，欢迎通过Github issue或作者QQ(1727364668)反馈**：
