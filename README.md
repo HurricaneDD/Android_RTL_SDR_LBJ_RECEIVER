@@ -5,7 +5,7 @@
 ## 软件下载
 下载本软件：
 
-- [<img alt="Get it on GitHub" src="media/github.png" width="200px">](https://github.com/HurricaneDD/Android_RTL_SDR_LBJ_RECEIVER/releases)
+- Github Release 下载：[<img alt="Get it on GitHub" src="media/github.png" width="200px">](https://github.com/HurricaneDD/Android_RTL_SDR_LBJ_RECEIVER/releases)
 - [备用：蓝奏云下载](https://wwbqo.lanzoub.com/b0j1r695i)，**密码:1111**
 
 
