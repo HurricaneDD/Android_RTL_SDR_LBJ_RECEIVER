@@ -17,8 +17,8 @@ android {
     applicationId = "org.hurricanedd.rtlsdrlbj"
     minSdk = 21
     targetSdk = 36
-    versionCode = 112
-    versionName = "1.1.2"
+    versionCode = 120
+    versionName = "1.2"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
