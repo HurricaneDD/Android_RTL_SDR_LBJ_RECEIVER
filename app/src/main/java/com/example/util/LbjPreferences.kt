@@ -2,6 +2,7 @@ package com.example.util
 
 import android.content.Context
 import android.content.SharedPreferences
+import java.util.Locale
 import androidx.core.content.edit
 import com.example.dsp.DspConstants
 
@@ -20,6 +21,8 @@ class LbjPreferences(context: Context) {
         private const val KEY_KEYWORDS = "pref_keywords"
         private const val KEY_FREQ_HZ = "pref_freq_hz"
         private const val KEY_GAIN_DB = "pref_gain_db"
+        private const val KEY_TUNER_AGC = "pref_tuner_agc"
+        private const val KEY_RTL_AGC = "pref_rtl_agc"
         private const val KEY_PPM = "pref_ppm"
         private const val KEY_CS_THRESHOLD_DB = "pref_cs_threshold_db"
         private const val KEY_SHOW_SIMULATION_BTN = "pref_show_simulation_button"
@@ -32,6 +35,44 @@ class LbjPreferences(context: Context) {
         private const val KEY_KEEP_SCREEN_ON = "pref_keep_screen_on"
         private const val KEY_SHOW_PACKET_LOG_TAB = "pref_show_packet_log_tab"
         private const val KEY_HAS_PROMPTED_DRIVER_INSTALL = "pref_has_prompted_driver_install"
+        private const val KEY_CONNECTION_MODE = "pref_connection_mode"
+        private const val KEY_TCP_HOST = "pref_tcp_host"
+        private const val KEY_TCP_PORT = "pref_tcp_port"
+        private const val KEY_IMPORTED_HISTORY_CSV_HASHES = "pref_imported_history_csv_hashes"
+        private const val MAX_IMPORTED_HISTORY_CSV_HASHES = 32
+    }
+
+    var connectionMode: String
+        get() = prefs.getString(KEY_CONNECTION_MODE, "sdr") ?: "sdr"
+        set(value) = prefs.edit { putString(KEY_CONNECTION_MODE, value) }
+
+    var tcpHost: String
+        get() = prefs.getString(KEY_TCP_HOST, "127.0.0.1") ?: "127.0.0.1"
+        set(value) = prefs.edit { putString(KEY_TCP_HOST, value.trim()) }
+
+    var tcpPort: Int
+        get() = prefs.getInt(KEY_TCP_PORT, 1234).coerceIn(1, 65535)
+        set(value) = prefs.edit { putInt(KEY_TCP_PORT, value.coerceIn(1, 65535)) }
+
+    fun hasImportedHistoryCsv(hash: String): Boolean {
+        val normalized = hash.trim().lowercase(Locale.ROOT)
+        if (normalized.isEmpty()) return false
+        val raw = prefs.getString(KEY_IMPORTED_HISTORY_CSV_HASHES, "") ?: ""
+        return raw.split("\n").any { it == normalized }
+    }
+
+    fun markHistoryCsvImported(hash: String) {
+        val normalized = hash.trim().lowercase(Locale.ROOT)
+        if (normalized.isEmpty()) return
+        val raw = prefs.getString(KEY_IMPORTED_HISTORY_CSV_HASHES, "") ?: ""
+        val hashes = raw.split("\n")
+            .map { it.trim().lowercase(Locale.ROOT) }
+            .filter { it.length == 64 }
+            .filter { it != normalized }
+            .takeLast(MAX_IMPORTED_HISTORY_CSV_HASHES - 1)
+            .toMutableList()
+        hashes += normalized
+        prefs.edit { putString(KEY_IMPORTED_HISTORY_CSV_HASHES, hashes.joinToString("\n")) }
     }
 
     var hasPromptedDriverInstall: Boolean
@@ -113,6 +154,14 @@ class LbjPreferences(context: Context) {
     var gainDb: Float
         get() = prefs.getFloat(KEY_GAIN_DB, DspConstants.HW_GAIN_DB)
         set(value) = prefs.edit { putFloat(KEY_GAIN_DB, value) }
+
+    var tunerAgc: Boolean
+        get() = prefs.getBoolean(KEY_TUNER_AGC, false)
+        set(value) = prefs.edit { putBoolean(KEY_TUNER_AGC, value) }
+
+    var rtlAgc: Boolean
+        get() = prefs.getBoolean(KEY_RTL_AGC, false)
+        set(value) = prefs.edit { putBoolean(KEY_RTL_AGC, value) }
 
     var ppm: Int
         get() = prefs.getInt(KEY_PPM, DspConstants.PPM)

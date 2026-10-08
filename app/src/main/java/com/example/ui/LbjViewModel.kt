@@ -1,12 +1,15 @@
 package com.example.ui
 
 import android.app.Application
+import android.net.Uri
 import android.os.Process
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import androidx.room.withTransaction
 import com.example.data.LbjDatabase
 import com.example.data.RouteStationKmEntity
 import com.example.data.TrainRecord
+import com.example.data.TrainSignalRecord
 import com.example.decoder.ArrivalEstimator
 import com.example.decoder.EtaInfo
 import com.example.decoder.LbjDecoder
@@ -23,10 +26,19 @@ import com.example.dsp.RssiGate
 import com.example.service.LbjKeepAliveService
 import com.example.util.BasebandAudioPlayer
 import com.example.util.LbjPreferences
+import com.example.util.HistoryCsvCodec
+import com.example.util.LbjCsvLogger
+import com.example.util.LocomotiveLibraryEntry
+import com.example.util.LocomotiveLibraryManager
+import com.example.util.LocomotiveLibrarySource
+import com.example.util.RailwayMapData
+import com.example.util.RailwayMapDataInfo
+import com.example.util.RailwayMapDataManager
 import com.example.util.SoundAlertManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -38,9 +50,30 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.update
+import java.nio.ByteBuffer
+import java.nio.charset.Charset
+import java.nio.charset.CodingErrorAction
+import java.net.InetSocketAddress
+import java.net.Socket
+import java.security.MessageDigest
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+
+enum class ReceiverConnectionMode {
+    SDR,
+    TCP
+}
+
+data class HistoryImportResult(
+    val importedCount: Int,
+    val alreadyImported: Boolean = false
+)
+
+data class DailyCsvFileInfo(
+    val name: String,
+    val sizeBytes: Long
+)
 
 data class PacketLogItem(
     val id: Long,
@@ -51,6 +84,7 @@ data class PacketLogItem(
 )
 
 data class ReceiverState(
+    val connectionMode: ReceiverConnectionMode = ReceiverConnectionMode.SDR,
     val isRunning: Boolean = false,
     val isSimulationMode: Boolean = false,
     val connectionState: RtlTcpClient.ConnectionState = RtlTcpClient.ConnectionState.IDLE,
@@ -58,6 +92,8 @@ data class ReceiverState(
     val port: Int = 1234,
     val freqHz: Double = DspConstants.DEFAULT_FREQ_HZ,
     val gainDb: Float = DspConstants.HW_GAIN_DB,
+    val tunerAgc: Boolean = false,
+    val rtlAgc: Boolean = false,
     val ppm: Int = DspConstants.PPM,
     val dcOffsetHz: Double = DspConstants.DEFAULT_DC_OFFSET_HZ,
     val bwKhz: Double = DspConstants.DEFAULT_BW_KHZ,
@@ -106,6 +142,9 @@ class LbjViewModel(application: Application) : AndroidViewModel(application) {
     private val prefs = LbjPreferences(application)
     private val db = LbjDatabase.getDatabase(application)
     private val dao = db.lbjDao()
+    private val csvLogger = LbjCsvLogger(application)
+    private val locomotiveLibraryManager = LocomotiveLibraryManager(application)
+    private val railwayMapDataManager = RailwayMapDataManager(application)
 
     val historyRecords = dao.getAllTrainRecords()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -115,8 +154,17 @@ class LbjViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _receiverState = MutableStateFlow(
         ReceiverState(
+            connectionMode = if (prefs.connectionMode == "tcp") {
+                ReceiverConnectionMode.TCP
+            } else {
+                ReceiverConnectionMode.SDR
+            },
+            host = if (prefs.connectionMode == "tcp") prefs.tcpHost else "127.0.0.1",
+            port = if (prefs.connectionMode == "tcp") prefs.tcpPort else 1234,
             freqHz = prefs.freqHz,
             gainDb = prefs.gainDb,
+            tunerAgc = prefs.tunerAgc,
+            rtlAgc = prefs.rtlAgc,
             ppm = prefs.ppm,
             csThresholdDb = prefs.csThresholdDb,
             strictFilter = prefs.strictFilter,
@@ -139,8 +187,24 @@ class LbjViewModel(application: Application) : AndroidViewModel(application) {
     )
     val receiverState: StateFlow<ReceiverState> = _receiverState.asStateFlow()
 
+    private val _locomotiveLibraryEntries =
+        MutableStateFlow<List<LocomotiveLibraryEntry>>(locomotiveLibraryManager.getEntries())
+    val locomotiveLibraryEntries: StateFlow<List<LocomotiveLibraryEntry>> =
+        _locomotiveLibraryEntries.asStateFlow()
+
+    private val _locomotiveLibrarySource =
+        MutableStateFlow(locomotiveLibraryManager.getSource())
+    val locomotiveLibrarySource: StateFlow<LocomotiveLibrarySource> =
+        _locomotiveLibrarySource.asStateFlow()
+
     private val _packetLogs = MutableStateFlow<List<PacketLogItem>>(emptyList())
     val packetLogs: StateFlow<List<PacketLogItem>> = _packetLogs.asStateFlow()
+
+    private val _railwayMapData = MutableStateFlow<RailwayMapData?>(null)
+    val railwayMapData: StateFlow<RailwayMapData?> = _railwayMapData.asStateFlow()
+
+    private val _railwayMapDataInfo = MutableStateFlow<RailwayMapDataInfo?>(null)
+    val railwayMapDataInfo: StateFlow<RailwayMapDataInfo?> = _railwayMapDataInfo.asStateFlow()
 
     private val _liveTelemetry = MutableStateFlow(TrainTelemetry())
     val liveTelemetry: StateFlow<TrainTelemetry> = _liveTelemetry.asStateFlow()
@@ -164,9 +228,13 @@ class LbjViewModel(application: Application) : AndroidViewModel(application) {
     )
 
     private val rtlClient = RtlTcpClient(
+        host = if (prefs.connectionMode == "tcp") prefs.tcpHost else "127.0.0.1",
+        port = if (prefs.connectionMode == "tcp") prefs.tcpPort else 1234,
         initialFreqHz = prefs.freqHz,
         dcOffsetHz = DspConstants.DEFAULT_DC_OFFSET_HZ,
         initialGainDb = prefs.gainDb,
+        initialTunerAgc = prefs.tunerAgc,
+        initialRtlAgc = prefs.rtlAgc,
         initialPpm = prefs.ppm
     )
 
@@ -207,6 +275,8 @@ class LbjViewModel(application: Application) : AndroidViewModel(application) {
     private var pendingApproachJob: Job? = null
 
     init {
+        locomotiveLibraryManager.applyToDecoder()
+
         // First-launch driver check
         if (!prefs.hasPromptedDriverInstall) {
             _receiverState.value = _receiverState.value.copy(showFirstLaunchDriverPrompt = true)
@@ -214,6 +284,13 @@ class LbjViewModel(application: Application) : AndroidViewModel(application) {
 
         // Refresh TTS audio cache stats
         refreshTtsCacheInfo()
+
+        // Load locally imported railway map data without depending on online OSM.
+        viewModelScope.launch(Dispatchers.IO) {
+            val data = railwayMapDataManager.load()
+            _railwayMapData.value = data
+            _railwayMapDataInfo.value = data?.info
+        }
 
         // 3-minute inactivity watchdog: if no telegram updates received within 3 minutes (180s),
         // automatically clear active train information and finalize session
@@ -374,11 +451,16 @@ class LbjViewModel(application: Application) : AndroidViewModel(application) {
                     )
                 }
 
-                // Deduplicated Train History: Exactly 1 record per train pass, synchronized via Mutex to eliminate race conditions
+                // Train history remains one record per train pass.
+                // In parallel, every telemetry callback is stored as one separate signal record.
+                // There is intentionally no content-based deduplication here.
                 viewModelScope.launch(Dispatchers.IO) {
                     trainDbMutex.withLock {
                         val baseNo = LocomotiveDict.extractBaseTrainNumber(currentNo)
                         val nowSeen = now
+
+                        // 每次收到一条 telemetry 都追加到当天 CSV；完全相同的信号也保留。
+                        csvLogger.append(telemetry, nowSeen)
 
                         if (isNewTrainSession) {
                             // Finalize previous train record if any
@@ -463,6 +545,27 @@ class LbjViewModel(application: Application) : AndroidViewModel(application) {
                                 activeTrainRecordId = insertedId
                             }
                         }
+
+                        // Exactly one DB row for this telemetry callback.
+                        // Identical consecutive signals are intentionally retained.
+                        activeTrainRecordId?.let { trainRecordId ->
+                            dao.insertTrainSignalRecord(
+                                TrainSignalRecord(
+                                    trainRecordId = trainRecordId,
+                                    trainNo = currentNo,
+                                    direction = telemetry.direction,
+                                    speed = telemetry.speed,
+                                    locoModel = telemetry.locoModel,
+                                    locoCode = telemetry.locoCode,
+                                    route = telemetry.route,
+                                    positionKm = telemetry.positionKm,
+                                    category = telemetry.category,
+                                    longitude = telemetry.longitude,
+                                    latitude = telemetry.latitude,
+                                    timestamp = nowSeen
+                                )
+                            )
+                        }
                     }
                 }
             }
@@ -514,10 +617,13 @@ class LbjViewModel(application: Application) : AndroidViewModel(application) {
         )
 
         if (!isSimulation) {
-            // Automatically attempt to drive/launch driver before connecting
-            try {
-                launchAndroidDriver()
-            } catch (_: Exception) {}
+            if (_receiverState.value.connectionMode == ReceiverConnectionMode.SDR) {
+                // SDR 模式：先联动启动手机 RTL-SDR 驱动，再连接本地 RTL-TCP 服务。
+                try {
+                    launchAndroidDriver()
+                } catch (_: Exception) {}
+            }
+            // TCP 模式：直接连接用户配置的远端 RTL-TCP 服务，不启动本机驱动。
             rtlClient.open()
         }
 
@@ -824,6 +930,113 @@ class LbjViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     // Tuning controls
+    fun setConnectionMode(mode: ReceiverConnectionMode) {
+        val current = _receiverState.value.connectionMode
+        if (current == mode) return
+
+        if (_receiverState.value.isRunning) {
+            stopReceiver()
+        } else {
+            rtlClient.close()
+        }
+
+        if (mode == ReceiverConnectionMode.TCP) {
+            rtlClient.setEndpoint(prefs.tcpHost, prefs.tcpPort)
+            _receiverState.value = _receiverState.value.copy(
+                connectionMode = mode,
+                host = prefs.tcpHost,
+                port = prefs.tcpPort,
+                connectionState = RtlTcpClient.ConnectionState.IDLE
+            )
+            prefs.connectionMode = "tcp"
+        } else {
+            rtlClient.setEndpoint("127.0.0.1", 1234)
+            _receiverState.value = _receiverState.value.copy(
+                connectionMode = mode,
+                host = "127.0.0.1",
+                port = 1234,
+                connectionState = RtlTcpClient.ConnectionState.IDLE
+            )
+            prefs.connectionMode = "sdr"
+        }
+    }
+
+    fun setTcpEndpoint(host: String, port: Int): String? {
+        val normalizedHost = host.trim()
+        if (normalizedHost.isEmpty()) return "TCP 地址不能为空"
+        if (port !in 1..65535) return "TCP 端口必须在 1~65535"
+
+        if (_receiverState.value.isRunning) {
+            stopReceiver()
+        }
+
+        return try {
+            rtlClient.setEndpoint(normalizedHost, port)
+            prefs.tcpHost = normalizedHost
+            prefs.tcpPort = port
+            _receiverState.value = _receiverState.value.copy(
+                host = normalizedHost,
+                port = port,
+                connectionState = RtlTcpClient.ConnectionState.IDLE
+            )
+            null
+        } catch (e: Exception) {
+            e.message ?: "TCP 地址设置失败"
+        }
+    }
+
+    fun testTcpConnection() {
+        if (_receiverState.value.connectionMode != ReceiverConnectionMode.TCP) {
+            _receiverState.value = _receiverState.value.copy(
+                warningMessage = "请先切换到 TCP 连接模式。"
+            )
+            return
+        }
+
+        if (_receiverState.value.isRunning) {
+            _receiverState.value = _receiverState.value.copy(
+                warningMessage = "正在接收中，请先停止接收再测试 TCP 连接。"
+            )
+            return
+        }
+
+        val host = _receiverState.value.host.trim()
+        val port = _receiverState.value.port
+        if (host.isEmpty()) {
+            _receiverState.value = _receiverState.value.copy(
+                connectionState = RtlTcpClient.ConnectionState.ERROR,
+                warningMessage = "TCP 主机地址不能为空。"
+            )
+            return
+        }
+
+        _receiverState.value = _receiverState.value.copy(
+            connectionState = RtlTcpClient.ConnectionState.CONNECTING,
+            warningMessage = ""
+        )
+
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                Socket().use { socket ->
+                    socket.connect(InetSocketAddress(host, port), 3000)
+                }
+                withContext(Dispatchers.Main) {
+                    _receiverState.value = _receiverState.value.copy(
+                        connectionState = RtlTcpClient.ConnectionState.IDLE,
+                        warningMessage = "TCP 测试连接成功：$host:$port"
+                    )
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    _receiverState.value = _receiverState.value.copy(
+                        connectionState = RtlTcpClient.ConnectionState.ERROR,
+                        warningMessage = "TCP 测试失败：$host:$port — ${e.message ?: "无法建立连接"}"
+                    )
+                }
+            }
+        }
+    }
+
     fun setFrequency(freqMhz: Double) {
         val freqHz = freqMhz * 1_000_000.0
         prefs.freqHz = freqHz
@@ -837,6 +1050,18 @@ class LbjViewModel(application: Application) : AndroidViewModel(application) {
         prefs.gainDb = gainDb
         _receiverState.value = _receiverState.value.copy(gainDb = gainDb)
         rtlClient.setGain(gainDb)
+    }
+
+    fun setTunerAgc(enabled: Boolean) {
+        prefs.tunerAgc = enabled
+        _receiverState.value = _receiverState.value.copy(tunerAgc = enabled)
+        rtlClient.setTunerAgc(enabled)
+    }
+
+    fun setRtlAgc(enabled: Boolean) {
+        prefs.rtlAgc = enabled
+        _receiverState.value = _receiverState.value.copy(rtlAgc = enabled)
+        rtlClient.setRtlAgc(enabled)
     }
 
     fun setPpm(ppm: Int) {
@@ -991,7 +1216,21 @@ class LbjViewModel(application: Application) : AndroidViewModel(application) {
 
     fun resetAllSettings() {
         prefs.resetAll()
+        prefs.connectionMode = "sdr"
+        prefs.tcpHost = "127.0.0.1"
+        prefs.tcpPort = 1234
+        if (!_receiverState.value.isRunning) {
+            rtlClient.setEndpoint("127.0.0.1", 1234)
+            _receiverState.value = _receiverState.value.copy(
+                connectionMode = ReceiverConnectionMode.SDR,
+                host = "127.0.0.1",
+                port = 1234,
+                connectionState = RtlTcpClient.ConnectionState.IDLE
+            )
+        }
         setFrequency(DspConstants.DEFAULT_FREQ_HZ / 1_000_000.0)
+        setTunerAgc(false)
+        setRtlAgc(false)
         setGain(DspConstants.HW_GAIN_DB)
         setPpm(DspConstants.PPM)
         setCsThreshold(DspConstants.DEFAULT_RSSI_THRESHOLD_DB)
@@ -1079,9 +1318,209 @@ class LbjViewModel(application: Application) : AndroidViewModel(application) {
         _receiverState.value = _receiverState.value.copy(warningMessage = "")
     }
 
+    fun getDailyCsvFiles(): List<DailyCsvFileInfo> {
+        return csvLogger.listDailyFiles().map {
+            DailyCsvFileInfo(it.name, it.sizeBytes)
+        }
+    }
+
+    suspend fun exportDailyCsvFile(name: String, uri: Uri) = withContext(Dispatchers.IO) {
+        val file = csvLogger.getDailyFile(name)
+            ?: throw IllegalArgumentException("找不到指定的每日 CSV 文件")
+        val resolver = getApplication<Application>().contentResolver
+        val inputBytes = file.readBytes()
+        resolver.openOutputStream(uri)?.use { output ->
+            output.write(inputBytes)
+            output.flush()
+        } ?: throw IllegalStateException("无法打开导出文件")
+    }
+
+    fun getTrainSignalRecords(trainRecordId: Long): Flow<List<TrainSignalRecord>> {
+        return dao.getTrainSignalRecords(trainRecordId)
+    }
+
+    fun selectLocomotiveLibrary(source: LocomotiveLibrarySource) {
+        locomotiveLibraryManager.setSource(source)
+        refreshLocomotiveLibrary()
+    }
+
+    fun saveLocomotiveEntry(code: Int, name: String) {
+        locomotiveLibraryManager.addOrUpdate(code, name)
+        refreshLocomotiveLibrary()
+    }
+
+    fun deleteLocomotiveEntry(code: Int) {
+        locomotiveLibraryManager.delete(code)
+        refreshLocomotiveLibrary()
+    }
+
+    suspend fun importLocomotiveLibrary(uri: Uri): Int = withContext(Dispatchers.IO) {
+        val resolver = getApplication<Application>().contentResolver
+        val bytes = resolver.openInputStream(uri)?.use { it.readBytes() }
+            ?: throw IllegalStateException("无法打开车型库文件")
+        val text = try {
+            Charsets.UTF_8.newDecoder()
+                .onMalformedInput(CodingErrorAction.REPORT)
+                .onUnmappableCharacter(CodingErrorAction.REPORT)
+                .decode(ByteBuffer.wrap(bytes))
+                .toString()
+        } catch (_: Exception) {
+            String(bytes, Charset.forName("GB18030"))
+        }
+
+        val count = locomotiveLibraryManager.importText(text)
+        refreshLocomotiveLibrary()
+        count
+    }
+
+    suspend fun exportLocomotiveLibrary(uri: Uri): Int = withContext(Dispatchers.IO) {
+        val text = locomotiveLibraryManager.exportText()
+        getApplication<Application>().contentResolver.openOutputStream(uri)?.use { output ->
+            output.write(text.toByteArray(Charsets.UTF_8))
+            output.flush()
+        } ?: throw IllegalStateException("无法打开车型库导出文件")
+        locomotiveLibraryManager.getEntries().size
+    }
+
+    private fun refreshLocomotiveLibrary() {
+        _locomotiveLibraryEntries.value = locomotiveLibraryManager.getEntries()
+        _locomotiveLibrarySource.value = locomotiveLibraryManager.getSource()
+    }
+
+    suspend fun exportHistoryCsv(uri: Uri): Int = withContext(Dispatchers.IO) {
+        val records = dao.getAllTrainSignalRecordsList()
+        val csv = HistoryCsvCodec.encode(records)
+        val resolver = getApplication<Application>().contentResolver
+        resolver.openOutputStream(uri)?.use { output ->
+            output.write(csv.toByteArray(Charsets.UTF_8))
+            output.flush()
+        } ?: throw IllegalStateException("无法打开导出文件")
+        records.size
+    }
+
+    suspend fun importHistoryCsv(uri: Uri): HistoryImportResult = withContext(Dispatchers.IO) {
+        val resolver = getApplication<Application>().contentResolver
+        val bytes = resolver.openInputStream(uri)?.use { it.readBytes() }
+            ?: throw IllegalStateException("无法打开导入文件")
+
+        val fingerprint = sha256Hex(bytes)
+        if (prefs.hasImportedHistoryCsv(fingerprint)) {
+            return@withContext HistoryImportResult(
+                importedCount = 0,
+                alreadyImported = true
+            )
+        }
+
+        val utf8 = bytes.toString(Charsets.UTF_8)
+        val text = if (utf8.contains("时间,车次,方向,速度")) {
+            utf8
+        } else {
+            bytes.toString(Charset.forName("GB18030"))
+        }
+        val rows = HistoryCsvCodec.parse(text)
+        val importedCount = importHistoryRows(rows)
+        prefs.markHistoryCsvImported(fingerprint)
+        HistoryImportResult(importedCount = importedCount)
+    }
+
+    private fun sha256Hex(bytes: ByteArray): String {
+        val digest = MessageDigest.getInstance("SHA-256").digest(bytes)
+        val builder = StringBuilder(digest.size * 2)
+        digest.forEach { byte ->
+            builder.append("%02x".format(Locale.ROOT, byte.toInt() and 0xFF))
+        }
+        return builder.toString()
+    }
+
+    private suspend fun importHistoryRows(rows: List<HistoryCsvCodec.Row>): Int {
+        if (rows.isEmpty()) return 0
+
+        return db.withTransaction {
+            val dateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
+            val sortedRows = rows.sortedWith(
+                compareBy<HistoryCsvCodec.Row> { it.timestamp }.thenBy { it.sourceIndex }
+            )
+            val groups = sortedRows.groupBy { row ->
+                listOf(
+                    row.trainNo,
+                    row.direction,
+                    dateFormat.format(Date(row.timestamp))
+                ).joinToString("\u001F")
+            }
+
+            var importedCount = 0
+
+            groups.values.forEach { group ->
+                val first = group.first()
+                val last = group.last()
+                val metadata = group.asReversed()
+
+                val trainRecordId = dao.insertTrainRecord(
+                    TrainRecord(
+                        trainNo = first.trainNo,
+                        direction = first.direction,
+                        locoModel = latestUseful(metadata) { it.locoModel } ?: first.locoModel,
+                        locoCode = latestUseful(metadata) { it.locoCode } ?: first.locoCode,
+                        route = latestUseful(metadata) { it.route } ?: first.route,
+                        category = latestUseful(metadata) { it.category } ?: first.category,
+                        firstSeenTime = first.timestamp,
+                        lastSeenTime = last.timestamp
+                    )
+                )
+
+                group.forEach { row ->
+                    dao.insertTrainSignalRecord(
+                        TrainSignalRecord(
+                            trainRecordId = trainRecordId,
+                            trainNo = row.trainNo,
+                            direction = row.direction,
+                            speed = row.speed,
+                            locoModel = row.locoModel,
+                            locoCode = row.locoCode,
+                            route = row.route,
+                            positionKm = row.positionKm,
+                            category = row.category,
+                            longitude = row.longitude,
+                            latitude = row.latitude,
+                            timestamp = row.timestamp
+                        )
+                    )
+                    importedCount++
+                }
+            }
+
+            importedCount
+        }
+    }
+
+    private fun latestUseful(
+        rows: List<HistoryCsvCodec.Row>,
+        selector: (HistoryCsvCodec.Row) -> String
+    ): String? {
+        return rows.asSequence()
+            .map(selector)
+            .firstOrNull { value ->
+                value.isNotBlank() &&
+                    value != "----" &&
+                    value != "---" &&
+                    value != "****" &&
+                    value != "未知"
+            }
+    }
+
+    suspend fun importRailwayMapData(uri: Uri): RailwayMapDataInfo = withContext(Dispatchers.IO) {
+        val data = railwayMapDataManager.importFromUri(uri)
+        _railwayMapData.value = data
+        _railwayMapDataInfo.value = data.info
+        data.info
+    }
+
     fun clearHistory() {
         viewModelScope.launch(Dispatchers.IO) {
-            dao.clearAllTrainRecords()
+            trainDbMutex.withLock {
+                dao.clearAllTrainSignalRecords()
+                dao.clearAllTrainRecords()
+            }
         }
         activeTrainRecordId = null
         activeTrainNo = null
@@ -1089,7 +1528,10 @@ class LbjViewModel(application: Application) : AndroidViewModel(application) {
 
     fun deleteHistoryRecord(id: Long) {
         viewModelScope.launch(Dispatchers.IO) {
-            dao.deleteTrainRecord(id)
+            trainDbMutex.withLock {
+                dao.deleteTrainSignalRecords(id)
+                dao.deleteTrainRecord(id)
+            }
         }
         if (activeTrainRecordId == id) {
             activeTrainRecordId = null
@@ -1098,6 +1540,13 @@ class LbjViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun launchAndroidDriver() {
+        if (_receiverState.value.connectionMode != ReceiverConnectionMode.SDR) {
+            _receiverState.value = _receiverState.value.copy(
+                warningMessage = "当前为 TCP 连接模式，不启动本机 RTL-SDR 驱动。"
+            )
+            return
+        }
+
         val state = _receiverState.value
         val ok = DriverLauncher.startRtlDriver(
             context = getApplication(),

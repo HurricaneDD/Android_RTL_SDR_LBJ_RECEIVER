@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import android.widget.Toast
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.VolumeOff
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
@@ -45,20 +46,24 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import com.example.ui.PacketLogItem
+import com.example.ui.ReceiverConnectionMode
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -67,11 +72,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.decoder.EtaInfo
-import com.example.decoder.TrainTelemetry
 import com.example.driver.RtlTcpClient
 import com.example.ui.ReceiverState
-import com.example.ui.components.LiveTelemetryCard
 import com.example.ui.components.SpectrumWaterfallView
 import com.example.ui.theme.AmberSignal
 import com.example.ui.theme.AmberSoft
@@ -93,19 +95,21 @@ import java.util.Locale
 @Composable
 fun DashboardScreen(
     state: ReceiverState,
-    telemetry: TrainTelemetry,
-    etaInfo: EtaInfo,
     onStartReceiver: (Boolean) -> Unit,
     onStopReceiver: () -> Unit,
+    onSetConnectionMode: (ReceiverConnectionMode) -> Unit = {},
+    onSetTcpEndpoint: (String, Int) -> String? = { _, _ -> null },
+    onTestTcpConnection: () -> Unit = {},
     onLaunchDriver: () -> Unit,
     onClearTelemetry: () -> Unit,
     onOpenFreqDialog: () -> Unit,
     onOpenGainDialog: () -> Unit,
+    onToggleTunerAgc: (Boolean) -> Unit,
+    onToggleRtlAgc: (Boolean) -> Unit,
     onOpenPpmDialog: () -> Unit,
     onOpenCsDialog: () -> Unit,
     onOpenWatchlistDialog: () -> Unit,
     onOpenFftExplanationDialog: () -> Unit,
-    onOpenTrainTypeRuleDialog: () -> Unit,
     onToggleAlertTone: (Boolean) -> Unit,
     onToggleAlertNotification: (Boolean) -> Unit,
     onToggleBasebandAudio: (Boolean) -> Unit,
@@ -115,6 +119,18 @@ fun DashboardScreen(
     modifier: Modifier = Modifier
 ) {
     val scrollState = rememberScrollState()
+    val context = LocalContext.current
+    var tcpHostText by remember(state.host) { mutableStateOf(state.host) }
+    var tcpPortText by remember(state.port) { mutableStateOf(state.port.toString()) }
+    var tcpEndpointError by remember { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(state.host, state.port, state.connectionMode) {
+        if (state.connectionMode == ReceiverConnectionMode.TCP) {
+            tcpHostText = state.host
+            tcpPortText = state.port.toString()
+            tcpEndpointError = null
+        }
+    }
 
     Column(
         modifier = modifier
@@ -131,6 +147,139 @@ fun DashboardScreen(
                 .padding(16.dp)
         ) {
             Column {
+                // Connection mode selector
+                Text(
+                    text = "连接方式",
+                    color = TextSecondary,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Medium
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = {
+                            tcpEndpointError = null
+                            onSetConnectionMode(ReceiverConnectionMode.SDR)
+                        },
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("connection_mode_sdr")
+                    ) {
+                        Text(
+                            text = if (state.connectionMode == ReceiverConnectionMode.SDR) {
+                                "✓ SDR连接"
+                            } else {
+                                "SDR连接"
+                            },
+                            fontSize = 12.sp
+                        )
+                    }
+                    OutlinedButton(
+                        onClick = {
+                            tcpEndpointError = null
+                            onSetConnectionMode(ReceiverConnectionMode.TCP)
+                        },
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("connection_mode_tcp")
+                    ) {
+                        Text(
+                            text = if (state.connectionMode == ReceiverConnectionMode.TCP) {
+                                "✓ TCP连接"
+                            } else {
+                                "TCP连接"
+                            },
+                            fontSize = 12.sp
+                        )
+                    }
+                }
+
+                if (state.connectionMode == ReceiverConnectionMode.TCP) {
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        OutlinedTextField(
+                            value = tcpHostText,
+                            onValueChange = {
+                                tcpHostText = it
+                                tcpEndpointError = null
+                            },
+                            label = { Text("IP / 主机") },
+                            singleLine = true,
+                            modifier = Modifier.weight(1f)
+                        )
+                        OutlinedTextField(
+                            value = tcpPortText,
+                            onValueChange = {
+                                tcpPortText = it.filter(Char::isDigit).take(5)
+                                tcpEndpointError = null
+                            },
+                            label = { Text("端口") },
+                            singleLine = true,
+                            modifier = Modifier.width(104.dp)
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        OutlinedButton(
+                            onClick = {
+                                val port = tcpPortText.toIntOrNull()
+                                tcpEndpointError = if (port == null) {
+                                    "请输入有效端口"
+                                } else {
+                                    onSetTcpEndpoint(tcpHostText, port)
+                                }
+                            },
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text("应用地址", fontSize = 12.sp)
+                        }
+
+                        OutlinedButton(
+                            onClick = {
+                                val port = tcpPortText.toIntOrNull()
+                                if (port == null || port !in 1..65535) {
+                                    tcpEndpointError = "请输入 1~65535 的有效端口"
+                                } else {
+                                    tcpEndpointError = onSetTcpEndpoint(tcpHostText, port)
+                                    if (tcpEndpointError == null) {
+                                        onTestTcpConnection()
+                                    }
+                                }
+                            },
+                            enabled = !state.isRunning &&
+                                tcpHostText.trim().isNotEmpty() &&
+                                tcpPortText.toIntOrNull() in 1..65535,
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text("测试连接", fontSize = 12.sp)
+                        }
+                    }
+
+                    tcpEndpointError?.let {
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = it,
+                            color = RedAlert,
+                            fontSize = 11.sp
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
+
                 // Row 1: Status Pill Indicator & Dynamic Current Freq
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -139,10 +288,20 @@ fun DashboardScreen(
                 ) {
                     val (statusBg, statusFg, statusText) = when {
                         state.isSimulationMode && state.isRunning -> Triple(AmberSoft, AmberSignal, "仿真信号流运行中")
+                        state.isRunning && state.connectionMode == ReceiverConnectionMode.TCP ->
+                            Triple(EmeraldSoft, EmeraldGreen, "TCP 实时接收中")
                         state.isRunning -> Triple(EmeraldSoft, EmeraldGreen, "SDR 实时接收中")
-                        state.connectionState == RtlTcpClient.ConnectionState.CONNECTING -> Triple(PrimaryBlueSoft, PrimaryBlueDark, "正在连接驱动...")
-                        state.connectionState == RtlTcpClient.ConnectionState.ERROR -> Triple(RedSoft, RedAlert, "驱动未连接")
-                        else -> Triple(SurfaceSecondary, TextMuted, "待驱动接收器")
+                        state.connectionState == RtlTcpClient.ConnectionState.CONNECTING &&
+                            state.connectionMode == ReceiverConnectionMode.TCP ->
+                            Triple(PrimaryBlueSoft, PrimaryBlueDark, "正在连接 TCP...")
+                        state.connectionState == RtlTcpClient.ConnectionState.CONNECTING ->
+                            Triple(PrimaryBlueSoft, PrimaryBlueDark, "正在连接驱动...")
+                        state.connectionState == RtlTcpClient.ConnectionState.ERROR &&
+                            state.connectionMode == ReceiverConnectionMode.TCP ->
+                            Triple(RedSoft, RedAlert, "TCP 未连接")
+                        state.connectionState == RtlTcpClient.ConnectionState.ERROR ->
+                            Triple(RedSoft, RedAlert, "驱动未连接")
+                        else -> Triple(SurfaceSecondary, TextMuted, "待接收器")
                     }
 
                     Box(
@@ -265,37 +424,39 @@ fun DashboardScreen(
                         }
                     }
 
-                    // 尝试重新驱动设备 (原联动驱动)
-                    OutlinedButton(
-                        onClick = onLaunchDriver,
-                        shape = RoundedCornerShape(8.dp),
-                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 4.dp, vertical = 0.dp),
-                        modifier = Modifier
-                            .weight(if (state.showSimulationButton) 1.35f else 1.5f)
-                            .height(40.dp)
-                            .testTag("launch_driver_button")
-                    ) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.Center,
-                            modifier = Modifier.fillMaxWidth()
+                    // SDR 模式下提供本机 RTL-SDR 驱动联动；TCP 模式不启动本机驱动。
+                    if (state.connectionMode == ReceiverConnectionMode.SDR) {
+                        OutlinedButton(
+                            onClick = onLaunchDriver,
+                            shape = RoundedCornerShape(8.dp),
+                            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 4.dp, vertical = 0.dp),
+                            modifier = Modifier
+                                .weight(if (state.showSimulationButton) 1.35f else 1.5f)
+                                .height(40.dp)
+                                .testTag("launch_driver_button")
                         ) {
-                            Icon(
-                                imageVector = Icons.Default.Usb,
-                                contentDescription = "Driver",
-                                tint = PrimaryBlue,
-                                modifier = Modifier
-                                    .size(15.dp)
-                                    .padding(end = 3.dp)
-                            )
-                            Text(
-                                text = "尝试重新驱动设备",
-                                color = PrimaryBlueDark,
-                                fontSize = 11.5.sp,
-                                fontWeight = FontWeight.Medium,
-                                maxLines = 1,
-                                softWrap = false
-                            )
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.Center,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Usb,
+                                    contentDescription = "Driver",
+                                    tint = PrimaryBlue,
+                                    modifier = Modifier
+                                        .size(15.dp)
+                                        .padding(end = 3.dp)
+                                )
+                                Text(
+                                    text = "尝试重新驱动设备",
+                                    color = PrimaryBlueDark,
+                                    fontSize = 11.5.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    maxLines = 1,
+                                    softWrap = false
+                                )
+                            }
                         }
                     }
 
@@ -419,17 +580,6 @@ fun DashboardScreen(
             isReceiving = state.isRunning,
             isAdcClipping = state.isAdcClipping,
             onClick = onOpenFftExplanationDialog
-        )
-
-        Spacer(modifier = Modifier.height(14.dp))
-
-        // Live Telemetry HUD Card
-        LiveTelemetryCard(
-            telemetry = telemetry,
-            etaInfo = etaInfo,
-            warningMessage = state.warningMessage,
-            currentStationKmText = state.currentRouteStationKmText,
-            onOpenTrainTypeRuleDialog = onOpenTrainTypeRuleDialog
         )
 
         Spacer(modifier = Modifier.height(14.dp))
@@ -596,127 +746,410 @@ fun DashboardScreen(
         Text(
             text = "快速调谐与参数 (Quick Controls)",
             color = TextSecondary,
-            fontSize = 12.sp,
+            fontSize = 13.sp,
             fontWeight = FontWeight.Bold,
-            modifier = Modifier.padding(bottom = 8.dp)
+            modifier = Modifier.padding(bottom = 9.dp)
         )
 
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            // Freq Chip
             Box(
                 modifier = Modifier
-                    .weight(1f)
+                    .weight(1.35f)
+                    .height(68.dp)
                     .background(SurfaceCard, RoundedCornerShape(8.dp))
                     .border(1.dp, BorderLight, RoundedCornerShape(8.dp))
                     .clickable { onOpenFreqDialog() }
-                    .padding(8.dp)
+                    .padding(horizontal = 10.dp, vertical = 9.dp)
             ) {
-                Column {
-                    Text("频率", color = TextMuted, fontSize = 10.sp)
+                Column(
+                    modifier = Modifier.fillMaxSize(),
+                    verticalArrangement = Arrangement.Center,
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text("频率", color = TextMuted, fontSize = 11.sp, fontWeight = FontWeight.Medium)
                     Text(
-                        String.format(Locale.US, "%.4f M", state.freqHz / 1_000_000.0),
+                        String.format(Locale.US, "%.4f MHz", state.freqHz / 1_000_000.0),
                         color = PrimaryBlueDark,
-                        fontSize = 12.sp,
+                        fontSize = 13.sp,
                         fontWeight = FontWeight.Bold,
-                        fontFamily = FontFamily.Monospace
+                        maxLines = 1,
+                        softWrap = false
                     )
                 }
             }
 
-            // Gain Chip
             Box(
                 modifier = Modifier
-                    .weight(1f)
+                    .weight(1.0f)
+                    .height(68.dp)
                     .background(SurfaceCard, RoundedCornerShape(8.dp))
                     .border(1.dp, BorderLight, RoundedCornerShape(8.dp))
-                    .clickable { onOpenGainDialog() }
-                    .padding(8.dp)
+                    .clickable {
+                        if (state.tunerAgc) {
+                            Toast.makeText(
+                                context,
+                                "Tuner AGC 已开启，正在自动控制硬件增益；请先关闭 Tuner AGC 再手动设置增益",
+                                Toast.LENGTH_SHORT
+                            ).show()
+                        } else {
+                            onOpenGainDialog()
+                        }
+                    }
+                    .padding(horizontal = 9.dp, vertical = 9.dp)
             ) {
-                Column {
-                    Text("增益", color = TextMuted, fontSize = 10.sp)
+                Column(
+                    modifier = Modifier.fillMaxSize(),
+                    verticalArrangement = Arrangement.Center,
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text("增益", color = TextMuted, fontSize = 11.sp, fontWeight = FontWeight.Medium)
                     Text(
                         String.format(Locale.US, "%.1f dB", state.gainDb),
                         color = TextPrimary,
-                        fontSize = 12.sp,
+                        fontSize = 13.sp,
                         fontWeight = FontWeight.Bold,
-                        fontFamily = FontFamily.Monospace
+                        fontFamily = FontFamily.Monospace,
+                        maxLines = 1
                     )
                 }
             }
 
-            // PPM Chip
             Box(
                 modifier = Modifier
-                    .weight(1f)
+                    .weight(0.78f)
+                    .height(68.dp)
                     .background(SurfaceCard, RoundedCornerShape(8.dp))
                     .border(1.dp, BorderLight, RoundedCornerShape(8.dp))
                     .clickable { onOpenPpmDialog() }
-                    .padding(8.dp)
+                    .padding(horizontal = 8.dp, vertical = 9.dp)
             ) {
-                Column {
-                    Text("PPM", color = TextMuted, fontSize = 10.sp)
+                Column(
+                    modifier = Modifier.fillMaxSize(),
+                    verticalArrangement = Arrangement.Center,
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text("PPM", color = TextMuted, fontSize = 11.sp, fontWeight = FontWeight.Medium)
                     Text(
                         "${state.ppm}",
                         color = TextPrimary,
-                        fontSize = 12.sp,
+                        fontSize = 13.sp,
                         fontWeight = FontWeight.Bold,
-                        fontFamily = FontFamily.Monospace
+                        fontFamily = FontFamily.Monospace,
+                        maxLines = 1
                     )
                 }
             }
 
-            // Squelch Threshold Chip
             Box(
                 modifier = Modifier
-                    .weight(1f)
+                    .weight(0.82f)
+                    .height(68.dp)
                     .background(SurfaceCard, RoundedCornerShape(8.dp))
                     .border(1.dp, BorderLight, RoundedCornerShape(8.dp))
                     .clickable { onOpenCsDialog() }
-                    .padding(8.dp)
+                    .padding(horizontal = 8.dp, vertical = 9.dp)
             ) {
-                Column {
-                    Text("门限", color = TextMuted, fontSize = 10.sp)
+                Column(
+                    modifier = Modifier.fillMaxSize(),
+                    verticalArrangement = Arrangement.Center,
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text("门限", color = TextMuted, fontSize = 11.sp, fontWeight = FontWeight.Medium)
                     Text(
                         String.format(Locale.US, "%.0f dB", state.csThresholdDb),
                         color = EmeraldGreen,
-                        fontSize = 12.sp,
+                        fontSize = 13.sp,
                         fontWeight = FontWeight.Bold,
-                        fontFamily = FontFamily.Monospace
-                    )
-                }
-            }
-
-            // Watchlist Chip
-            Box(
-                modifier = Modifier
-                    .weight(1f)
-                    .background(SurfaceCard, RoundedCornerShape(8.dp))
-                    .border(1.dp, BorderLight, RoundedCornerShape(8.dp))
-                    .clickable { onOpenWatchlistDialog() }
-                    .padding(8.dp)
-            ) {
-                Column {
-                    Text("关注", color = TextMuted, fontSize = 10.sp)
-                    val kwText = if (state.keywords.isNotEmpty()) "${state.keywords.size}个" else "全部"
-                    Text(
-                        kwText,
-                        color = AmberSignal,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold
+                        fontFamily = FontFamily.Monospace,
+                        maxLines = 1
                     )
                 }
             }
         }
 
+        Spacer(modifier = Modifier.height(14.dp))
+        Text(
+            text = "射频自动增益",
+            color = TextSecondary,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.padding(bottom = 8.dp)
+        )
+
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .border(1.dp, BorderLight, RoundedCornerShape(12.dp))
+                .testTag("dashboard_agc_card"),
+            shape = RoundedCornerShape(12.dp),
+            colors = CardDefaults.cardColors(containerColor = SurfaceCard)
+        ) {
+            Column(modifier = Modifier.padding(12.dp)) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(154.dp),
+                    verticalAlignment = Alignment.Top
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(154.dp)
+                            .padding(horizontal = 7.dp),
+                        horizontalAlignment = Alignment.Start
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = "Tuner AGC",
+                                color = TextPrimary,
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Spacer(modifier = Modifier.width(7.dp))
+                            Text(
+                                text = if (state.tunerAgc) "已开启" else "已关闭",
+                                color = if (state.tunerAgc) PrimaryBlueDark else TextMuted,
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(5.dp))
+                        Text(
+                            text = "自动控制 R820T 模拟前端增益",
+                            color = TextSecondary,
+                            fontSize = 11.sp,
+                            lineHeight = 15.sp
+                        )
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = if (state.tunerAgc) "自动调节硬件增益，手动增益已锁定" else "关闭后可手动调整硬件增益",
+                            color = if (state.tunerAgc) PrimaryBlueDark else TextSecondary,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium,
+                            lineHeight = 16.sp
+                        )
+                        Spacer(modifier = Modifier.weight(1f))
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(bottom = 5.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Switch(
+                                checked = state.tunerAgc,
+                                onCheckedChange = onToggleTunerAgc,
+                                colors = SwitchDefaults.colors(
+                                    checkedThumbColor = Color.White,
+                                    checkedTrackColor = PrimaryBlue,
+                                    uncheckedTrackColor = SurfaceSecondary
+                                ),
+                                modifier = Modifier.scale(1.05f)
+                            )
+                        }
+                    }
+
+                    Box(
+                        modifier = Modifier
+                            .width(1.dp)
+                            .height(154.dp)
+                            .background(BorderLight)
+                    )
+
+                    Column(
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(154.dp)
+                            .padding(horizontal = 7.dp),
+                        horizontalAlignment = Alignment.Start
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = "RTL AGC",
+                                color = TextPrimary,
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Spacer(modifier = Modifier.width(7.dp))
+                            Text(
+                                text = if (state.rtlAgc) "已开启" else "已关闭",
+                                color = if (state.rtlAgc) PrimaryBlueDark else TextMuted,
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(5.dp))
+                        Text(
+                            text = "自动控制 RTL2832U 数字端 AGC",
+                            color = TextSecondary,
+                            fontSize = 11.sp,
+                            lineHeight = 15.sp
+                        )
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = if (state.rtlAgc) "数字端自动增益正在工作" else "关闭后使用固定数字增益",
+                            color = if (state.rtlAgc) PrimaryBlueDark else TextSecondary,
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium,
+                            lineHeight = 16.sp
+                        )
+                        Spacer(modifier = Modifier.weight(1f))
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(bottom = 5.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Switch(
+                                checked = state.rtlAgc,
+                                onCheckedChange = onToggleRtlAgc,
+                                colors = SwitchDefaults.colors(
+                                    checkedThumbColor = Color.White,
+                                    checkedTrackColor = PrimaryBlue,
+                                    uncheckedTrackColor = SurfaceSecondary
+                                ),
+                                modifier = Modifier.scale(1.05f)
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(SurfaceSecondary, RoundedCornerShape(8.dp))
+                        .clickable {
+                            if (state.tunerAgc) {
+                                Toast.makeText(
+                                    context,
+                                    "Tuner AGC 已开启，当前由调谐器自动控制硬件增益",
+                                    Toast.LENGTH_SHORT
+                                ).show()
+                            } else {
+                                onOpenGainDialog()
+                            }
+                        }
+                        .padding(horizontal = 10.dp, vertical = 9.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "手动硬件增益",
+                            color = if (state.tunerAgc) TextMuted else TextPrimary,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                        Spacer(modifier = Modifier.height(2.dp))
+                        Text(
+                            text = if (state.tunerAgc) "Tuner AGC 开启后不可手动修改" else "点击设置 R820T Gain",
+                            color = TextMuted,
+                            fontSize = 11.sp
+                        )
+                    }
+                    Text(
+                        text = if (state.tunerAgc) "自动" else String.format(Locale.US, "%.1f dB", state.gainDb),
+                        color = if (state.tunerAgc) TextMuted else PrimaryBlueDark,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold,
+                        fontFamily = FontFamily.Monospace
+                    )
+                }
+            }
+        }
+        Spacer(modifier = Modifier.height(18.dp))
         if (state.showPacketLogTab) {
             Spacer(modifier = Modifier.height(16.dp))
             DashboardPacketLogCard(
                 packetLogs = packetLogs,
                 onNavigateToPacketLogs = onNavigateToPacketLogs
             )
+        }
+
+        Spacer(modifier = Modifier.height(18.dp))
+
+        Text(
+            text = "关注车次",
+            color = TextSecondary,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.padding(bottom = 8.dp)
+        )
+
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .border(1.dp, BorderLight, RoundedCornerShape(12.dp))
+                .clickable { onOpenWatchlistDialog() },
+            shape = RoundedCornerShape(12.dp),
+            colors = CardDefaults.cardColors(containerColor = SurfaceCard)
+        ) {
+            if (state.keywords.isEmpty()) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 11.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "全部车次",
+                        color = AmberSignal,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "未设置关注名单",
+                        color = TextMuted,
+                        fontSize = 11.sp
+                    )
+                }
+            } else {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 10.dp, vertical = 10.dp),
+                    verticalArrangement = Arrangement.spacedBy(7.dp)
+                ) {
+                    state.keywords.chunked(4).forEach { rowKeywords ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(7.dp)
+                        ) {
+                            rowKeywords.forEach { keyword ->
+                                Box(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .background(AmberSoft, RoundedCornerShape(6.dp))
+                                        .padding(horizontal = 8.dp, vertical = 7.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = keyword,
+                                        color = AmberSignal,
+                                        fontSize = 13.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        fontFamily = FontFamily.Monospace,
+                                        maxLines = 1
+                                    )
+                                }
+                            }
+                            repeat(4 - rowKeywords.size) {
+                                Spacer(modifier = Modifier.weight(1f))
+                            }
+                        }
+                    }
+                    Text(
+                        text = "点击此处修改关注车次",
+                        color = TextMuted,
+                        fontSize = 10.sp,
+                        modifier = Modifier.padding(top = 1.dp)
+                    )
+                }
+            }
         }
     }
 }

@@ -40,6 +40,24 @@ class ArrivalEstimator(
         fun formatKm(km: Double?): String {
             return if (km != null) String.format(Locale.US, "%.1f KM", km) else "---"
         }
+        /**
+         * 规范化公里标文本：去掉人为补齐的前导 0。
+         * 例如 0016.7 -> 16.7、0008.2 -> 8.2、0197.2 -> 197.2，
+         * 真实的 2946.2 保持 2946.2。
+         */
+        fun normalizePositionKm(value: String?): String {
+            val raw = value?.trim().orEmpty()
+            if (raw.isEmpty() || raw in listOf("---", "---.-", "----")) return raw
+
+            val sign = if (raw.startsWith("-")) "-" else ""
+            val unsigned = if (sign.isNotEmpty()) raw.substring(1) else raw
+            val dot = unsigned.indexOf('.')
+            val integerPart = if (dot >= 0) unsigned.substring(0, dot) else unsigned
+            val fractionalPart = if (dot >= 0) unsigned.substring(dot) else ""
+
+            val normalizedInteger = integerPart.toLongOrNull()?.toString() ?: return raw
+            return sign + normalizedInteger + fractionalPart
+        }
 
         /**
          * Parses railway milestone string, e.g.:

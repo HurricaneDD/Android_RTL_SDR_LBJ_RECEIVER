@@ -14,6 +14,8 @@ data class TrainTelemetry(
     val isHit: Boolean = false,
     val timestamp: Long = 0L,
     val rawBcd: String = "",
+    val longitude: String = "",
+    val latitude: String = "",
     val warning: String = "",
     val warningTime: Long = 0L
 )
@@ -60,12 +62,28 @@ object LocomotiveDict {
         331 to "CJ3", 332 to "CJ4", 333 to "CJ5", 334 to "CJ6"
     )
 
+    @Volatile
+    private var activeLocos: Map<Int, String> = LOCOS
+
+    /**
+     * 设置当前实际使用的车型库。
+     * 解码阶段只查询这个库，不会回退到 LOCOS。
+     */
+    @Synchronized
+    fun setActiveLibrary(entries: Map<Int, String>) {
+        activeLocos = entries.toMap()
+    }
+
+    fun getActiveLibrary(): Map<Int, String> {
+        return activeLocos
+    }
+
     fun getLocoName(typeCode: Int): String {
-        return LOCOS[typeCode] ?: "未知机车($typeCode)"
+        return activeLocos[typeCode] ?: "未知($typeCode)"
     }
 
     fun hasLoco(typeCode: Int): Boolean {
-        return LOCOS.containsKey(typeCode)
+        return activeLocos.containsKey(typeCode)
     }
 
     /**

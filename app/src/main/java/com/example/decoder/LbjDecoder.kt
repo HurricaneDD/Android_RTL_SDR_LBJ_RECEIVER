@@ -33,6 +33,18 @@ class LbjDecoder(
     private var currentMsgHasError = false
 
     private val sessions = HashMap<String, MutableMap<String, Any?>>()
+
+    private data class DirectionCacheEntry(
+        var direction: String,
+        var lastKm: Double?,
+        var updatedAt: Long
+    )
+
+    private val directionCache = HashMap<String, DirectionCacheEntry>()
+    private companion object {
+        const val DIRECTION_CACHE_TTL_MS = 60 * 60 * 1000L
+    }
+
     private var lastTrain: String? = null
     private var lastWarnTime = 0L
 
@@ -44,6 +56,7 @@ class LbjDecoder(
         currentEta = EtaInfo()
         lastTrain = null
         sessions.clear()
+        directionCache.clear()
     }
 
     fun resetDpllSoft() {
@@ -305,6 +318,69 @@ class LbjDecoder(
         return data
     }
 
+    /**
+     * 方向判断：公里标变化优先，Function Code 只作为首次/无公里标时的辅助。
+     * 方向状态缓存 1 小时，超过后重新建立判断。
+     * 默认假设公里标增加为下行、减少为上行；若 ArrivalEstimator 配置为相反方向则反向判断。
+     */
+    private fun resolveDirection(
+        trainNo: String,
+        km: Double?,
+        funcHint: Int,
+        now: Long
+    ): String {
+        val hint = when (funcHint) {
+            1 -> "下行"
+            3 -> "上行"
+            else -> null
+        }
+
+        val cached = directionCache[trainNo]
+        if (cached == null || now - cached.updatedAt > DIRECTION_CACHE_TTL_MS) {
+            val initialDirection = hint ?: "检测中"
+            directionCache[trainNo] = DirectionCacheEntry(
+                direction = initialDirection,
+                lastKm = km,
+                updatedAt = now
+            )
+            return initialDirection
+        }
+
+        cached.updatedAt = now
+
+        val lastKm = cached.lastKm
+        if (km != null && lastKm != null) {
+            if (kotlin.math.abs(km - lastKm) < 0.001) {
+                return cached.direction
+            }
+
+            val downIncreases = arrivalEstimator?.downIncreases ?: true
+            val newDirection = if (downIncreases) {
+                if (km < lastKm) "上行" else "下行"
+            } else {
+                if (km > lastKm) "上行" else "下行"
+            }
+
+            cached.direction = newDirection
+            cached.lastKm = km
+            return newDirection
+        }
+
+        if (km != null) {
+            cached.lastKm = km
+        }
+
+        if (cached.direction != "检测中") {
+            return cached.direction
+        }
+
+        if (hint != null) {
+            cached.direction = hint
+            return hint
+        }
+
+        return "检测中"
+    }
     fun decodeLbj(bcd: String, validForEta: Boolean = true): TrainTelemetry? {
         val addr = currentAddr
         val func = currentFunc
@@ -336,12 +412,6 @@ class LbjDecoder(
                 lastTrain = baseTrain
             }
 
-            val direction = when (func) {
-                1 -> "下行"
-                3 -> "上行"
-                else -> "未知($func)"
-            }
-
             val rs = if (bcd.length >= 9) bcd.substring(6, 9).replace(' ', '0').replace('U', '0').replace('*', '0') else ""
             val speedInt = rs.toIntOrNull()
             val speed = if (speedInt != null && speedInt in 0..400) speedInt.toString() else "---"
@@ -351,8 +421,20 @@ class LbjDecoder(
                 "---.-"
             } else {
                 val ps = pr.replace(' ', '0')
-                if (ps.all { it.isDigit() }) "${ps.substring(0, 4)}.${ps[4]}" else "---.-"
+                if (ps.all { it.isDigit() }) {
+                    ArrivalEstimator.normalizePositionKm(ps.substring(0, 4) + "." + ps[4])
+                } else {
+                    "---.-"
+                }
             }
+
+            val positionKm = ArrivalEstimator.parseKm(position)
+            val direction = resolveDirection(
+                trainNo = baseTrain!!,
+                km = positionKm,
+                funcHint = func,
+                now = now
+            )
 
             val session = sessions.getOrPut(baseTrain!!) {
                 mutableMapOf(
@@ -366,10 +448,14 @@ class LbjDecoder(
                     "route" to "----",
                     "route_valid" to false,
                     "is_detailed" to false,
+                    "longitude" to "",
+                    "latitude" to "",
                     "timestamp" to now
                 )
             }
-            if (direction != "未知" && !direction.startsWith("未知")) {
+            if (direction == "上行" || direction == "下行") {
+                session["direction"] = direction
+            } else if (!session.containsKey("direction")) {
                 session["direction"] = direction
             }
             if (speed != "---") {
@@ -482,6 +568,35 @@ class LbjDecoder(
                             session["route"] = ru
                             session["route_valid"] = true
                         }
+
+                        // LBJ 1234002 coordinates:
+                        // longitude nibbles 30..38 -> XXX°XX.XXXX′E
+                        // latitude  nibbles 39..46 -> XX°XX.XXXX′N
+                        if (ih.length >= 47) {
+                            val lonPart = ih.substring(30, 39)
+                            val latPart = ih.substring(39, 47)
+                            if (lonPart.all { it.isDigit() } && latPart.all { it.isDigit() }) {
+                                val lonDeg = lonPart.substring(0, 3)
+                                val lonMin = "${lonPart.substring(3, 5)}.${lonPart.substring(5, 9)}"
+                                val latDeg = latPart.substring(0, 2)
+                                val latMin = "${latPart.substring(2, 4)}.${latPart.substring(4, 8)}"
+
+                                val lonDegValue = lonDeg.toIntOrNull()
+                                val lonMinValue = lonMin.toDoubleOrNull()
+                                val latDegValue = latDeg.toIntOrNull()
+                                val latMinValue = latMin.toDoubleOrNull()
+
+                                if (lonDegValue != null && lonMinValue != null &&
+                                    latDegValue != null && latMinValue != null &&
+                                    lonDegValue in 0..180 && lonMinValue in 0.0..<60.0 &&
+                                    latDegValue in 0..90 && latMinValue in 0.0..<60.0
+                                ) {
+                                    session["longitude"] = "${lonDeg}°${lonMin}′E"
+                                    session["latitude"] = "${latDeg}°${latMin}′N"
+                                }
+                            }
+                        }
+
                         session["is_detailed"] = true
                         session["timestamp"] = now
                     }
@@ -513,6 +628,8 @@ class LbjDecoder(
             val loco = (s["loco"] as? String) ?: "----"
             val locoCode = (s["loco_code"] as? String) ?: "---"
             val route = (s["route"] as? String) ?: "----"
+            val longitude = (s["longitude"] as? String) ?: ""
+            val latitude = (s["latitude"] as? String) ?: ""
             val routeValid = (s["route_valid"] as? Boolean) ?: false
             val isDet = (s["is_detailed"] as? Boolean) ?: false
             val cat = TrainCategorizer.categorize(fullTrain, isDet)
@@ -532,7 +649,9 @@ class LbjDecoder(
                 isRouteValid = routeValid,
                 isHit = isHit,
                 timestamp = now,
-                rawBcd = bcd
+                rawBcd = bcd,
+                longitude = longitude,
+                latitude = latitude
             )
 
             if (keywords.isNotEmpty() && filterMode == "strict" && !isHit) {

@@ -74,6 +74,7 @@ import com.example.ui.theme.SurfaceCard
 import com.example.ui.theme.SurfaceSecondary
 import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.TextSecondary
+import com.example.util.RailwayMapDataInfo
 import java.util.Locale
 
 @Composable
@@ -100,6 +101,10 @@ fun SettingsScreen(
     onSelectThemeMode: (String) -> Unit = {},
     onClearTtsCache: () -> Pair<Int, Long> = { Pair(0, 0L) },
     onToggleEnableExternalAutomation: (Boolean) -> Unit = {},
+    onOpenLocomotiveLibrary: () -> Unit = {},
+    onOpenDailyCsv: () -> Unit = {},
+    railwayMapDataInfo: RailwayMapDataInfo? = null,
+    onImportRailwayMapData: () -> Unit = {},
     onResetAllSettings: () -> Unit,
     onLaunchDriver: () -> Unit,
     onInstallDriver: () -> Unit = {},
@@ -330,6 +335,31 @@ fun SettingsScreen(
                     )
                 }
 
+                SettingsItem(
+                    title = "每日 CSV 数据",
+                    subtitle = "查看按自然日保存的原始 LBJ 信号 CSV，并单独导出某一天",
+                    value = "管理",
+                    onClick = onOpenDailyCsv
+                )
+
+                SettingsItem(
+                    title = "车型库",
+                    subtitle = "维护 LBJ 机车代号与车型名称；可选择内置或外置车型库并导入/导出 TXT",
+                    value = "管理",
+                    onClick = onOpenLocomotiveLibrary
+                )
+
+                val railwayMapSubtitle = railwayMapDataInfo?.let {
+                    "当前：${it.fileName} · ${it.lineCount} 条线路 · ${it.stationCount} 个车站；详情页在卫星影像上叠加本地铁路数据"
+                } ?: "导入 GeoJSON / JSON 铁路地图；详情页只使用卫星影像 + 本地线路，不依赖 OSM 在线底图"
+
+                SettingsItem(
+                    title = "铁路地图数据",
+                    subtitle = railwayMapSubtitle,
+                    value = if (railwayMapDataInfo == null) "导入" else "重新导入",
+                    onClick = onImportRailwayMapData
+                )
+
                 val themeLabel = when (state.themeMode) {
                     "dark" -> "深色模式"
                     "light" -> "浅色模式"
@@ -391,9 +421,21 @@ fun SettingsScreen(
                 )
                 SettingsItem(
                     title = "硬件增益 (R820T Gain)",
-                    subtitle = "调节接收灵敏度与信噪比 (默认: 15.7 dB)",
-                    value = String.format(Locale.US, "%.1f dB", state.gainDb),
-                    onClick = onOpenGainDialog
+                    subtitle = if (state.tunerAgc) "Tuner AGC 已开启，点击这里只提示，不会进入手动增益设置" else "调节接收灵敏度与信噪比 (默认: 15.7 dB)",
+                    value = if (state.tunerAgc) "自动" else String.format(Locale.US, "%.1f dB", state.gainDb),
+                    onClick = {
+                        if (state.tunerAgc) {
+                            Toast.makeText(
+                                context,
+                                "Tuner AGC 已开启，当前由调谐器自动控制硬件增益；请先关闭 Tuner AGC",
+                                Toast.LENGTH_SHORT
+                            ).show()
+                        } else {
+                            onOpenGainDialog()
+                        }
+                    },
+                    enabled = true,
+                    visualEnabled = !state.tunerAgc
                 )
                 SettingsItem(
                     title = "PPM 晶振频偏校准",
@@ -630,22 +672,28 @@ fun SettingsItem(
     title: String,
     subtitle: String,
     value: String,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    enabled: Boolean = true,
+    visualEnabled: Boolean = enabled
 ) {
+    val primaryColor = if (visualEnabled) TextPrimary else TextSecondary
+    val secondaryColor = if (visualEnabled) TextSecondary else TextSecondary.copy(alpha = 0.55f)
+    val valueColor = if (visualEnabled) PrimaryBlueDark else TextSecondary.copy(alpha = 0.55f)
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable { onClick() }
+            .clickable(enabled = enabled) { onClick() }
             .padding(horizontal = 14.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Column(modifier = Modifier.weight(1f)) {
-            Text(text = title, color = TextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Medium)
-            Text(text = subtitle, color = TextSecondary, fontSize = 11.sp)
+            Text(text = title, color = primaryColor, fontSize = 14.sp, fontWeight = FontWeight.Medium)
+            Text(text = subtitle, color = secondaryColor, fontSize = 11.sp)
         }
         Text(
             text = value,
-            color = PrimaryBlueDark,
+            color = valueColor,
             fontSize = 13.sp,
             fontWeight = FontWeight.Bold,
             fontFamily = FontFamily.Monospace

@@ -34,6 +34,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -161,6 +162,7 @@ fun LiveTelemetryCard(
                         color = if (isHit) AmberSignal else if (telemetry.trainNo != "----") TextPrimary else TextSubtle,
                         fontSize = 32.sp,
                         fontFamily = FontFamily.Monospace,
+                        textAlign = TextAlign.Center,
                         fontWeight = FontWeight.ExtraBold,
                         letterSpacing = 1.sp,
                         modifier = Modifier.testTag("train_number_text")
@@ -275,7 +277,8 @@ fun LiveTelemetryCard(
                             text = telemetry.locoModel,
                             color = TextPrimary,
                             fontSize = 15.sp,
-                            fontWeight = FontWeight.Bold
+                            fontWeight = FontWeight.Bold,
+                            textAlign = TextAlign.Center
                         )
                         if (telemetry.locoCode != "---") {
                             Spacer(modifier = Modifier.height(2.dp))
@@ -319,7 +322,8 @@ fun LiveTelemetryCard(
                             color = TextPrimary,
                             fontSize = 16.sp,
                             fontFamily = FontFamily.Monospace,
-                            fontWeight = FontWeight.ExtraBold
+                            fontWeight = FontWeight.ExtraBold,
+                            textAlign = TextAlign.Center
                         )
                     }
                 }
@@ -332,7 +336,8 @@ fun LiveTelemetryCard(
             val milestoneStr = if (parsedKm != null) " (${ArrivalEstimator.formatMilestone(parsedKm)})" else ""
             val routeText = if (telemetry.route != "----") telemetry.route else "----"
             val directionText = telemetry.direction
-            val kmText = if (telemetry.positionKm != "---.-") "${telemetry.positionKm} KM$milestoneStr" else "---.- KM"
+            val normalizedPositionKm = ArrivalEstimator.normalizePositionKm(telemetry.positionKm)
+            val kmText = if (normalizedPositionKm != "---.-") normalizedPositionKm + " KM" + milestoneStr else "---.- KM"
             val mergedDisplay = "$routeText - $directionText - $kmText"
 
             Box(
@@ -379,8 +384,80 @@ fun LiveTelemetryCard(
                         color = if (telemetry.isRouteValid) EmeraldGreen else TextPrimary,
                         fontSize = 15.sp,
                         fontFamily = FontFamily.Monospace,
-                        fontWeight = FontWeight.Bold
+                        fontWeight = FontWeight.Bold,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth()
                     )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // Row 4: LBJ 经纬度
+            val longitudeText = telemetry.longitude.ifBlank { "---" }
+            val latitudeText = telemetry.latitude.ifBlank { "---" }
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(SurfaceSecondary, RoundedCornerShape(10.dp))
+                    .border(1.dp, BorderLight, RoundedCornerShape(10.dp))
+                    .padding(12.dp)
+                    .testTag("coordinates_card")
+            ) {
+                Column {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Default.Navigation,
+                            contentDescription = "经纬度",
+                            tint = PrimaryBlue,
+                            modifier = Modifier.padding(end = 6.dp)
+                        )
+                        Text(
+                            text = "经纬度",
+                            color = TextSecondary,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(6.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "经度",
+                                color = TextMuted,
+                                fontSize = 10.sp
+                            )
+                            Text(
+                                text = longitudeText,
+                                color = TextPrimary,
+                                fontSize = 13.sp,
+                                fontFamily = FontFamily.Monospace,
+                                fontWeight = FontWeight.Bold,
+                                textAlign = TextAlign.Center
+                            )
+                        }
+
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "纬度",
+                                color = TextMuted,
+                                fontSize = 10.sp
+                            )
+                            Text(
+                                text = latitudeText,
+                                color = TextPrimary,
+                                fontSize = 13.sp,
+                                fontFamily = FontFamily.Monospace,
+                                fontWeight = FontWeight.Bold,
+                                textAlign = TextAlign.Center
+                            )
+                        }
+                    }
                 }
             }
 
@@ -443,7 +520,8 @@ fun LiveTelemetryCard(
                             color = TextPrimary,
                             fontSize = 15.sp,
                             fontFamily = FontFamily.Monospace,
-                            fontWeight = FontWeight.Bold
+                            fontWeight = FontWeight.Bold,
+                            textAlign = TextAlign.Center
                         )
                     }
 

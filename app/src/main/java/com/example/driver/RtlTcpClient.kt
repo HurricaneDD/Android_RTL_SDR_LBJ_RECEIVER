@@ -15,18 +15,28 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
 class RtlTcpClient(
-    val host: String = "127.0.0.1",
-    val port: Int = 1234,
+    host: String = "127.0.0.1",
+    port: Int = 1234,
     initialFreqHz: Double = DspConstants.DEFAULT_FREQ_HZ,
     val dcOffsetHz: Double = DspConstants.DEFAULT_DC_OFFSET_HZ,
     val sampleRate: Int = DspConstants.RTL_SAMPLE_RATE,
     initialGainDb: Float = DspConstants.HW_GAIN_DB,
+    initialTunerAgc: Boolean = false,
+    initialRtlAgc: Boolean = false,
     initialPpm: Int = DspConstants.PPM,
     val blockSize: Int = DspConstants.BLOCK_SIZE
 ) {
+    var host: String = host
+        private set
+    var port: Int = port
+        private set
     var targetFreqHz: Double = initialFreqHz
         private set
     var gainDb: Float = initialGainDb
+        private set
+    var tunerAgc: Boolean = initialTunerAgc
+        private set
+    var rtlAgc: Boolean = initialRtlAgc
         private set
     var ppm: Int = initialPpm
         private set
@@ -51,8 +61,8 @@ class RtlTcpClient(
         private set
 
     private val isRunning = AtomicBoolean(false)
-    private var socket: Socket? = null
-    private var outputStream: OutputStream? = null
+    @Volatile private var socket: Socket? = null
+    @Volatile private var outputStream: OutputStream? = null
     private var workerThread: Thread? = null
     private val bufferPool = ArrayBlockingQueue<ComplexBuffer>(24).apply {
         repeat(24) { offer(ComplexBuffer(blockSize)) }
@@ -66,6 +76,15 @@ class RtlTcpClient(
 
     fun recycleBuffer(buffer: ComplexBuffer) {
         bufferPool.offer(buffer)
+    }
+
+    fun setEndpoint(newHost: String, newPort: Int) {
+        val normalizedHost = newHost.trim()
+        require(normalizedHost.isNotEmpty()) { "TCP 地址不能为空" }
+        require(newPort in 1..65535) { "TCP 端口必须在 1~65535" }
+        check(!isRunning.get()) { "接收运行中不能修改 TCP 地址" }
+        host = normalizedHost
+        port = newPort
     }
 
     fun open() {
@@ -156,10 +175,12 @@ class RtlTcpClient(
             // Send initial tuning commands
             sendCmd(DspConstants.CMD_SET_SAMPLERATE, sampleRate.toLong())
             sendCmd(DspConstants.CMD_SET_FREQ, hwFreqHz.toLong())
-            sendCmd(DspConstants.CMD_SET_GAINMODE, 1L)
-            sendCmd(DspConstants.CMD_SET_GAIN, (gainDb * 10).toLong())
+            sendCmd(DspConstants.CMD_SET_GAINMODE, if (tunerAgc) 0L else 1L)
+            if (!tunerAgc) {
+                sendCmd(DspConstants.CMD_SET_GAIN, (gainDb * 10).toLong())
+            }
             sendCmd(DspConstants.CMD_SET_FREQCORR, ppm.toLong())
-            sendCmd(DspConstants.CMD_SET_AGC, 0L)
+            sendCmd(DspConstants.CMD_SET_AGC, if (rtlAgc) 1L else 0L)
 
             setState(ConnectionState.CONNECTED, null)
 
@@ -195,7 +216,7 @@ class RtlTcpClient(
         } catch (e: Exception) {
             if (isRunning.get()) {
                 val msg = if (e is java.net.ConnectException) {
-                    "【连接被拒】未检测到运行中的 RTL-SDR 驱动，请先点击启动驱动或开启测试仿真模式。"
+                    "【连接被拒】无法连接 RTL-TCP 服务端 " + host + ":" + port
                 } else {
                     "网络流异常: ${e.localizedMessage ?: e.message}"
                 }
@@ -230,8 +251,23 @@ class RtlTcpClient(
             }
         }
         gainDb = nearest
-        sendCmd(DspConstants.CMD_SET_GAINMODE, 1L)
-        sendCmd(DspConstants.CMD_SET_GAIN, (nearest * 10).toLong())
+        if (!tunerAgc) {
+            sendCmd(DspConstants.CMD_SET_GAINMODE, 1L)
+            sendCmd(DspConstants.CMD_SET_GAIN, (nearest * 10).toLong())
+        }
+    }
+
+    fun setTunerAgc(enabled: Boolean) {
+        tunerAgc = enabled
+        sendCmd(DspConstants.CMD_SET_GAINMODE, if (enabled) 0L else 1L)
+        if (!enabled) {
+            sendCmd(DspConstants.CMD_SET_GAIN, (gainDb * 10).toLong())
+        }
+    }
+
+    fun setRtlAgc(enabled: Boolean) {
+        rtlAgc = enabled
+        sendCmd(DspConstants.CMD_SET_AGC, if (enabled) 1L else 0L)
     }
 
     fun setPpm(newPpm: Int) {

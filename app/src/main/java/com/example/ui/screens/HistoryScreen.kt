@@ -2,6 +2,7 @@ package com.example.ui.screens
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -9,10 +10,13 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -37,15 +41,21 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlin.math.roundToInt
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
 import com.example.data.TrainRecord
 import com.example.ui.theme.BlueUp
 import com.example.ui.theme.BlueUpSoft
@@ -70,6 +80,9 @@ fun HistoryScreen(
     records: List<TrainRecord>,
     onClearAll: () -> Unit,
     onDeleteRecord: (Long) -> Unit,
+    onOpenRecord: (TrainRecord) -> Unit = {},
+    onImportCsv: () -> Unit = {},
+    onExportCsv: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     var showClearDialog by remember { mutableStateOf(false) }
@@ -99,7 +112,7 @@ fun HistoryScreen(
                 )
                 Spacer(modifier = Modifier.height(2.dp))
                 Text(
-                    text = "一趟列车单条归档：记录车次、方向、机车、线路及通联起止时间",
+                    text = "点击列车卡片查看逐条 LBJ 信号、速度、位置及坐标记录",
                     color = TextSecondary,
                     fontSize = 12.sp,
                     lineHeight = 16.sp
@@ -123,6 +136,26 @@ fun HistoryScreen(
                     fontSize = 12.sp,
                     fontWeight = FontWeight.SemiBold
                 )
+            }
+        }
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            OutlinedButton(
+                onClick = onImportCsv,
+                modifier = Modifier.weight(1f)
+            ) {
+                Text("导入 CSV", fontSize = 12.sp)
+            }
+
+            OutlinedButton(
+                onClick = onExportCsv,
+                enabled = records.isNotEmpty(),
+                modifier = Modifier.weight(1f)
+            ) {
+                Text("导出 CSV", fontSize = 12.sp)
             }
         }
 
@@ -158,18 +191,31 @@ fun HistoryScreen(
                 }
             }
         } else {
-            LazyColumn(
-                modifier = Modifier.fillMaxSize(),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                items(records, key = { it.id }) { record ->
-                    TrainRecordCard(
-                        record = record,
-                        firstSeenStr = timeFormat.format(Date(record.firstSeenTime)),
-                        lastSeenStr = timeFormat.format(Date(record.lastSeenTime)),
-                        onDelete = { onDeleteRecord(record.id) }
-                    )
+            val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+            Box(modifier = Modifier.fillMaxSize()) {
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier.fillMaxSize(),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    items(records, key = { it.id }) { record ->
+                        TrainRecordCard(
+                            record = record,
+                            firstSeenStr = timeFormat.format(Date(record.firstSeenTime)),
+                            lastSeenStr = timeFormat.format(Date(record.lastSeenTime)),
+                            onDelete = { onDeleteRecord(record.id) },
+                            onClick = { onOpenRecord(record) }
+                        )
+                    }
                 }
+
+                HistoryScrollbar(
+                    listState = listState,
+                    modifier = Modifier
+                        .align(Alignment.CenterEnd)
+                        .fillMaxHeight()
+                        .offset(x = 8.dp)
+                )
             }
         }
     }
@@ -201,11 +247,121 @@ fun HistoryScreen(
 }
 
 @Composable
+private fun HistoryScrollbar(
+    listState: androidx.compose.foundation.lazy.LazyListState,
+    modifier: Modifier = Modifier
+) {
+    val layoutInfo = listState.layoutInfo
+    val totalItems = layoutInfo.totalItemsCount
+    val visibleItems = layoutInfo.visibleItemsInfo.size
+
+    if (totalItems <= visibleItems || visibleItems == 0) return
+
+    var trackHeightPx by remember { mutableStateOf(0) }
+    val viewportHeightPx =
+        (layoutInfo.viewportEndOffset - layoutInfo.viewportStartOffset).coerceAtLeast(1)
+    val minThumbPx = 64
+    val rawThumbPx = (viewportHeightPx.toFloat() * visibleItems / totalItems).roundToInt()
+    val thumbHeightPx = rawThumbPx.coerceIn(minThumbPx, viewportHeightPx)
+    val maxTravelPx = (trackHeightPx - thumbHeightPx).coerceAtLeast(0)
+
+    val firstVisible = layoutInfo.visibleItemsInfo.firstOrNull()
+    val averageItemHeightPx = if (visibleItems > 0) {
+        viewportHeightPx.toFloat() / visibleItems
+    } else {
+        1f
+    }
+    val maxFirstPosition = (totalItems - visibleItems).coerceAtLeast(1)
+    val firstPosition = (firstVisible?.index ?: 0) +
+        ((firstVisible?.offset ?: 0) / averageItemHeightPx)
+    val progress = (firstPosition / maxFirstPosition).coerceIn(0f, 1f)
+    val thumbTopPx = (maxTravelPx * progress).roundToInt()
+    val scrollScope = rememberCoroutineScope()
+
+    Box(
+        modifier = modifier
+            .width(28.dp)
+            .onSizeChanged { trackHeightPx = it.height }
+            .pointerInput(totalItems, visibleItems, trackHeightPx, thumbHeightPx) {
+                var dragStartTopPx = thumbTopPx.toFloat()
+                var accumulatedDragPx = 0f
+                var dragScrollJob: Job? = null
+
+                detectDragGestures(
+                    onDragStart = {
+                        dragStartTopPx = thumbTopPx.toFloat()
+                        accumulatedDragPx = 0f
+                        dragScrollJob?.cancel()
+                    },
+                    onDrag = { change, dragAmount ->
+                        change.consume()
+                        if (maxTravelPx <= 0) return@detectDragGestures
+
+                        accumulatedDragPx += dragAmount.y
+                        val nextTopPx = (dragStartTopPx + accumulatedDragPx)
+                            .coerceIn(0f, maxTravelPx.toFloat())
+
+                        val targetProgress = (nextTopPx / maxTravelPx).coerceIn(0f, 1f)
+                        val targetIndex = (targetProgress * maxFirstPosition)
+                            .roundToInt()
+                            .coerceIn(0, maxFirstPosition)
+
+                        dragScrollJob?.cancel()
+                        dragScrollJob = scrollScope.launch {
+                            listState.scrollToItem(targetIndex)
+                        }
+                    },
+                    onDragEnd = {
+                        dragScrollJob?.cancel()
+                        dragScrollJob = null
+                    },
+                    onDragCancel = {
+                        dragScrollJob?.cancel()
+                        dragScrollJob = null
+                    }
+                )
+            },
+        contentAlignment = Alignment.CenterEnd
+    ) {
+        Box(
+            modifier = Modifier
+                .width(4.dp)
+                .fillMaxHeight()
+                .align(Alignment.CenterEnd)
+                .background(
+                    BorderLight.copy(alpha = 0.65f),
+                    RoundedCornerShape(4.dp)
+                )
+        )
+
+        Box(
+            modifier = Modifier
+                .width(10.dp)
+                .height(
+                    with(androidx.compose.ui.platform.LocalDensity.current) {
+                        thumbHeightPx.toDp()
+                    }
+                )
+                .offset(
+                    x = with(androidx.compose.ui.platform.LocalDensity.current) { 2.dp },
+                    y = with(androidx.compose.ui.platform.LocalDensity.current) { thumbTopPx.toDp() }
+                )
+                .align(Alignment.TopEnd)
+                .background(
+                    TextMuted.copy(alpha = 0.82f),
+                    RoundedCornerShape(6.dp)
+                )
+        )
+    }
+}
+
+@Composable
 fun TrainRecordCard(
     record: TrainRecord,
     firstSeenStr: String,
     lastSeenStr: String,
-    onDelete: () -> Unit
+    onDelete: () -> Unit,
+    onClick: () -> Unit = {}
 ) {
     val durationSeconds = kotlin.math.max(0L, (record.lastSeenTime - record.firstSeenTime) / 1000L)
     val durationStr = if (durationSeconds >= 60) {
@@ -217,6 +373,7 @@ fun TrainRecordCard(
     Card(
         modifier = Modifier
             .fillMaxWidth()
+            .clickable(onClick = onClick)
             .border(1.dp, BorderLight, RoundedCornerShape(12.dp)),
         shape = RoundedCornerShape(12.dp),
         colors = CardDefaults.cardColors(containerColor = SurfaceCard)
