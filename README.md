@@ -20,7 +20,7 @@
 - [Android RTL-SDR Driver Github 仓库](https://github.com/signalwareltd/rtl_tcp_andro-)
 
 ## 致谢和免责
-**本项目参考了 [Sdr-Is-Fun/RTL_SDR_LBJ_RECEIVER](https://github.com/Sdr-Is-Fun/RTL_SDR_LBJ_RECEIVER/tree/main)**，使用Google Gemini 模型进行开发。
+**本项目参考了 [Sdr-Is-Fun/RTL_SDR_LBJ_RECEIVER](https://github.com/Sdr-Is-Fun/RTL_SDR_LBJ_RECEIVER/tree/main)**，Google Gemini 、GPT等模型参与了开发。
 
 本项目基于 GNU GPL 开源。发布或分发基于本项目的修改版本时，应遵循相同协议开源。
 
